@@ -2629,7 +2629,14 @@ document.addEventListener("DOMContentLoaded", async () => {
   // browsers may restore pages from cache without firing DOMContentLoaded.
   // Reinvoke key page wiring on the pageshow event to ensure the
   // calendar, homepage and budget features are properly initialised.
-  window.addEventListener('pageshow', () => {
+  window.addEventListener('pageshow', (event) => {
+    // Avoid duplicating event listeners by only rewiring when the page is
+    // restored from the back/forward cache.  A normal navigation (where
+    // event.persisted is false) already wired everything during
+    // DOMContentLoaded.
+    if (!event.persisted) {
+      return;
+    }
     const sess = requireSession();
     // Rebuild the dynamic calendar if present
     if (qs('#calendar-grid')) {
