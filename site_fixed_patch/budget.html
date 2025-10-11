@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html lang="en"><head>
+<meta charset="utf-8"/>
+<link crossorigin="" href="https://fonts.gstatic.com/" rel="preconnect"/>
+<link as="style" href="https://fonts.googleapis.com/css2?display=swap&amp;family=Noto+Sans%3Awght%40400%3B500%3B700%3B900&amp;family=Plus+Jakarta+Sans%3Awght%40400%3B500%3B700%3B800" onload="this.rel='stylesheet'" rel="stylesheet"/>
+    <!-- Page title updated: brand removed as requested -->
+    <title>Budget</title>
+<link href="data:image/x-icon;base64," rel="icon" type="image/x-icon"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined" rel="stylesheet"/>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<script>
+      tailwind.config = {
+        darkMode: "class",
+        theme: {
+          extend: {
+            colors: {
+              "primary": "#13a4ec",
+              "background-light": "#f6f7f8",
+              "background-dark": "#101c22",
+            },
+            fontFamily: {
+              "display": ["Plus Jakarta Sans"]
+            },
+            borderRadius: {"DEFAULT": "0.5rem", "lg": "1rem", "xl": "1.5rem", "full": "9999px"},
+          },
+        },
+      };
+    </script>
+</head>
+<body class="bg-background-light dark:bg-background-dark font-display text-gray-800 dark:text-gray-200">
+<div class="relative flex h-auto min-h-screen w-full flex-col overflow-x-hidden">
+<div class="flex h-full grow flex-col">
+<header class="flex items-center justify-between whitespace-nowrap border-b border-gray-200 dark:border-gray-800 px-4 sm:px-6 lg:px-10 py-3">
+<div class="flex items-center gap-4 text-gray-900 dark:text-white">
+<svg class="h-6 w-6 text-primary" fill="none" viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg">
+<path d="M44 11.2727C44 14.0109 39.8386 16.3957 33.69 17.6364C39.8386 18.877 44 21.2618 44 24C44 26.7382 39.8386 29.123 33.69 30.3636C39.8386 31.6043 44 33.9891 44 36.7273C44 40.7439 35.0457 44 24 44C12.9543 44 4 40.7439 4 36.7273C4 33.9891 8.16144 31.6043 14.31 30.3636C8.16144 29.123 4 26.7382 4 24C4 21.2618 8.16144 18.877 14.31 17.6364C8.16144 16.3957 4 14.0109 4 11.2727C4 7.25611 12.9543 4 24 4C35.0457 4 44 7.25611 44 11.2727Z" fill="currentColor"></path>
+</svg>
+<!-- Brand name removed per user request -->
+</div>
+<div class="flex items-center gap-4">
+                <nav class="hidden lg:flex items-center gap-6">
+                    <!-- Consistent navigation across the site -->
+                    <!-- Navigation uses lowercase filenames to avoid file-not-found errors on case-sensitive servers -->
+                    <a class="text-sm font-medium hover:text-primary" href="homepage.html">Home</a>
+                    <a class="text-sm font-medium hover:text-primary" href="calender.html">Trips</a>
+                    <a class="text-sm font-medium hover:text-primary" href="budget.html">Budget</a>
+                    <!-- New Reminders link added to header navigation.  Direct users to the dedicated
+                         reminders page instead of burying this feature under the budget page.  The
+                         filename is lowercase to avoid case‑sensitivity issues on Netlify. -->
+                    <a id="reminders-nav" class="text-sm font-medium hover:text-primary" href="reminders.html">Reminders</a>
+                    <!-- Link to packing list page -->
+                    <a id="packing-nav" class="text-sm font-medium hover:text-primary" href="packing.html">Packing</a>
+                </nav>
+                <!-- Removed notifications icon.  Notifications are now handled on the
+                     dedicated reminders page.  Leaving the button here served no purpose
+                     and confused users. -->
+            <!-- User avatar removed per user request -->
+<!-- Log out link -->
+                    <a id="logout-button" href="#" class="hidden lg:inline-block text-sm font-medium text-gray-700 dark:text-gray-300 hover:text-primary transition-colors">Log&nbsp;Out</a>
+</div>
+</header>
+<main class="flex flex-1 justify-center py-8 px-4 sm:px-6 lg:px-8">
+<div class="w-full max-w-5xl space-y-8">
+<div>
+<h1 class="text-3xl font-bold tracking-tight text-gray-900 dark:text-white">Budget Tracker</h1>
+<p class="mt-1 text-sm text-gray-600 dark:text-gray-400">Manage your vacation expenses and stay within budget.</p>
+</div>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
+        <div class="space-y-4">
+            <label class="block">
+                <span class="block text-sm font-medium text-gray-700 dark:text-gray-300 pb-1.5">Vacation Name</span>
+                <!-- Use a select dropdown instead of a free text input so users can easily choose a trip.
+                     Options are populated dynamically via JavaScript.  The first option acts as a
+                     placeholder prompting the user to select a trip. -->
+                <select id="vacation-select" name="vacation_name" class="form-select mt-1 block w-full rounded-lg border-gray-300 dark:border-gray-700 bg-background-light dark:bg-background-dark shadow-sm focus:border-primary focus:ring focus:ring-primary focus:ring-opacity-50 h-12 px-4">
+                    <option value="">Select a trip</option>
+                </select>
+            </label>
+        </div>
+        <div class="space-y-4">
+            <label class="block">
+                <span class="block text-sm font-medium text-gray-700 dark:text-gray-300 pb-1.5">Total Budget</span>
+                    <input id="total-budget" name="total_budget" class="form-input mt-1 block w-full rounded-lg border-gray-300 dark:border-gray-700 bg-background-light dark:bg-background-dark shadow-sm focus:border-primary focus:ring focus:ring-primary focus:ring-opacity-50 h-12 px-4" placeholder="0" />
+            </label>
+        </div>
+        </div>
+        <!-- Currency selector for all budget values.  This dropdown allows the user to view amounts in different currencies.  The selected currency
+             is used throughout the budget page to convert and format numbers via a currency converter defined in app.js. -->
+        <div class="space-y-4">
+            <label class="block">
+                <span class="block text-sm font-medium text-gray-700 dark:text-gray-300 pb-1.5">Currency</span>
+                <select id="currency-select" name="currency" class="form-select mt-1 block w-full rounded-lg border-gray-300 dark:border-gray-700 bg-background-light dark:bg-background-dark shadow-sm focus:border-primary focus:ring focus:ring-primary focus:ring-opacity-50 h-12 px-4">
+                    <option value="USD">USD</option>
+                    <option value="EUR">EUR</option>
+                    <option value="GBP">GBP</option>
+                    <option value="TRY">TRY</option>
+                </select>
+            </label>
+        </div>
+<div class="space-y-4">
+                <div class="flex justify-between items-center">
+<h2 class="text-xl font-bold text-gray-900 dark:text-white">Expenses</h2>
+                    <button id="add-expense-button" class="flex items-center justify-center gap-2 rounded-lg h-10 px-4 bg-primary text-white text-sm font-bold shadow-sm hover:bg-primary/90">
+                        <span class="material-symbols-outlined text-lg"> add </span>
+                        <span>Add Expense</span>
+                    </button>
+</div>
+                <!-- Inline expense entry form. This replaces JavaScript popups for expense creation and editing. It is hidden by default and revealed via the Add/Edit buttons. -->
+                <div id="expense-form" class="hidden bg-gray-50 dark:bg-gray-800 p-4 rounded-lg space-y-4">
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        <div>
+                            <label for="expense-name" class="block text-sm font-medium text-gray-700 dark:text-gray-300">Expense Name</label>
+                            <input id="expense-name" type="text" class="form-input mt-1 block w-full rounded-lg border-gray-300 dark:border-gray-700 bg-background-light dark:bg-background-dark shadow-sm focus:border-primary focus:ring focus:ring-primary focus:ring-opacity-50 h-10 px-3" placeholder="Expense name" />
+                        </div>
+                        <div>
+                            <label for="expense-category" class="block text-sm font-medium text-gray-700 dark:text-gray-300">Category</label>
+                            <input id="expense-category" type="text" class="form-input mt-1 block w-full rounded-lg border-gray-300 dark:border-gray-700 bg-background-light dark:bg-background-dark shadow-sm focus:border-primary focus:ring focus:ring-primary focus:ring-opacity-50 h-10 px-3" placeholder="Category" />
+                        </div>
+                        <div>
+                            <label for="expense-amount" class="block text-sm font-medium text-gray-700 dark:text-gray-300">Amount</label>
+                            <input id="expense-amount" type="number" step="0.01" min="0" class="form-input mt-1 block w-full rounded-lg border-gray-300 dark:border-gray-700 bg-background-light dark:bg-background-dark shadow-sm focus:border-primary focus:ring focus:ring-primary focus:ring-opacity-50 h-10 px-3" placeholder="Amount" />
+                        </div>
+                        <div>
+                            <label for="expense-date" class="block text-sm font-medium text-gray-700 dark:text-gray-300">Date</label>
+                            <input id="expense-date" type="date" class="form-input mt-1 block w-full rounded-lg border-gray-300 dark:border-gray-700 bg-background-light dark:bg-background-dark shadow-sm focus:border-primary focus:ring focus:ring-primary focus:ring-opacity-50 h-10 px-3" />
+                        </div>
+                    </div>
+                    <!-- Action buttons for the expense form -->
+                    <div class="flex justify-end items-center gap-4">
+                        <button id="expense-save-btn" class="flex items-center justify-center gap-2 rounded-lg h-10 px-4 bg-primary text-white text-sm font-bold shadow-sm hover:bg-primary/90">
+                            <span>Save</span>
+                        </button>
+                        <button id="expense-cancel-btn" class="flex items-center justify-center gap-2 rounded-lg h-10 px-4 border border-gray-300 dark:border-gray-700 bg-background-light dark:bg-background-dark text-sm font-bold text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700">
+                            Cancel
+                        </button>
+                    </div>
+                </div>
+<div class="overflow-x-auto rounded-lg border border-gray-200 dark:border-gray-700">
+                        <table id="expenses-table" class="w-full text-sm text-left">
+<thead class="bg-gray-100 dark:bg-gray-800 text-xs text-gray-700 dark:text-gray-400 uppercase tracking-wider">
+<tr>
+<th class="px-6 py-3" scope="col">Expense</th>
+<th class="px-6 py-3" scope="col">Category</th>
+<th class="px-6 py-3" scope="col">Amount</th>
+<th class="px-6 py-3" scope="col">Date</th>
+<th class="px-6 py-3 text-right" scope="col">Actions</th>
+</tr>
+</thead>
+<tbody class="divide-y divide-gray-200 dark:divide-gray-700">
+</tbody>
+</table>
+                        </div>
+                        <!-- Undo delete button.  When an expense is removed, it is placed onto a stack
+                             and can be restored using this button.  Hidden when there is nothing to undo. -->
+                        <div class="flex justify-end mt-2">
+                          <button id="undo-delete-btn" class="text-sm text-primary hover:underline hidden">Undo Delete</button>
+                        </div>
+                      </div>
+        </div>
+<div class="space-y-4">
+<h2 class="text-xl font-bold text-gray-900 dark:text-white">Budget Summary</h2>
+<div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+<div class="rounded-xl p-6 bg-gray-100 dark:bg-gray-800">
+<p class="text-sm font-medium text-gray-600 dark:text-gray-400">Remaining Budget</p>
+<p class="text-3xl font-bold text-gray-900 dark:text-white mt-1" data-summary="remaining">$0</p>
+</div>
+<div class="rounded-xl p-6 bg-gray-100 dark:bg-gray-800">
+<p class="text-sm font-medium text-gray-600 dark:text-gray-400">Total Spent</p>
+<p class="text-3xl font-bold text-gray-900 dark:text-white mt-1" data-summary="spent">$0</p>
+</div>
+</div>
+<div>
+<div class="flex justify-between mb-1">
+<span class="text-base font-medium text-gray-700 dark:text-gray-300">Budget Usage</span>
+<span class="text-sm font-medium text-gray-700 dark:text-gray-300" data-summary="percent">0%</span>
+</div>
+<div class="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2.5">
+<div id="budget-usage-bar" class="bg-primary h-2.5 rounded-full" style="width: 0%"></div>
+</div>
+</div>
+
+        <!-- Visualisation of expenses by category using Chart.js.  The canvas below will be
+             initialised by app.js when the budget page is loaded.  A chart offers a more
+             sophisticated way to interpret spending patterns and satisfies the IA
+             complexity requirements through the integration of a third‑party library. -->
+        <div class="mt-6">
+            <h3 class="text-lg font-semibold text-gray-900 dark:text-white mb-2">Expenses Breakdown</h3>
+            <!-- Canvas used by Chart.js to visualise expenses by category.  The chart instance is managed
+                 in app.js and will update whenever the underlying data changes or the currency is switched. -->
+            <!-- Assign an explicit minimum height and full width to the expenses chart canvas.  Without a height set via CSS
+                 some browsers will collapse the element to zero height, causing the chart to disappear.  The tailwind
+                 utility classes below ensure the chart occupies space even before Chart.js draws onto it. -->
+            <!-- Added an explicit border to the expenses chart canvas to ensure it occupies visible space during rendering.  Without
+                 a defined border and height the canvas may collapse to zero height in some layouts, causing the chart to disappear. -->
+            <canvas id="expenses-chart" height="300" class="w-full min-h-[300px]" style="max-width:500px;margin-left:auto;margin-right:auto;border:1px solid #e5e7eb;"></canvas>
+        </div>
+        <!-- Top categories list.  Populated dynamically to show which categories you spend the most on.  This section leverages
+             a binary search tree to sort categories by total spending and demonstrates the use of dynamic data structures and
+             object‑oriented programming. -->
+        <div class="mt-6">
+            <h3 class="text-lg font-semibold text-gray-900 dark:text-white mb-2">Top Categories</h3>
+            <ul id="top-categories-list" class="space-y-1 text-gray-700 dark:text-gray-300"></ul>
+        </div>
+  <!-- Import/export controls removed as per user request -->
+  <!-- Reminder and notifications sections removed.  Reminders are managed on the
+       dedicated reminders page.  This space can be reused for additional
+       budgeting features in the future. -->
+</div>
+</div>
+</main>
+</div>
+</div>
+    <!-- Load Chart.js library for expense visualisations.  Although the
+         application includes a native Canvas fallback, adding Chart.js
+         ensures the expense breakdown pie chart renders reliably across
+         browsers.  Version 3.x is preferred for the global `Chart`
+         constructor.  If the library fails to load, the fallback will
+         automatically activate. -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@3.9.1/dist/chart.min.js"></script>
+
+    <!-- Load Supabase library and initialise client -->
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@1.35.7/dist/umd/supabase.min.js"></script>
+    <script src="supabase-init.js"></script>
+    <!-- Load application logic -->
+    <script src="app.js" defer></script>
+</body></html>

@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Packing List</title>
+  <script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;700;800&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined" rel="stylesheet" />
+  <script>
+    tailwind.config = {
+      darkMode: "class",
+      theme: {
+        extend: {
+          colors: {
+            "primary": "#13a4ec",
+            "background-light": "#f6f7f8",
+            "background-dark": "#101c22",
+          },
+          fontFamily: {
+            "display": ["Plus Jakarta Sans"]
+          },
+        }
+      }
+    };
+  </script>
+  <style>
+    .material-symbols-outlined {
+      font-variation-settings:
+        'FILL' 0,
+        'wght' 400,
+        'GRAD' 0,
+        'opsz' 24;
+    }
+  </style>
+</head>
+<body class="bg-background-light dark:bg-background-dark font-display text-slate-800 dark:text-slate-200">
+  <div class="flex flex-col min-h-screen">
+    <!-- Header with navigation -->
+    <header class="bg-white/70 dark:bg-background-dark/70 backdrop-blur-sm sticky top-0 z-10 border-b border-slate-200 dark:border-slate-800">
+      <div class="container mx-auto px-4 sm:px-6 lg:px-8">
+        <div class="flex items-center justify-between h-16">
+          <div class="flex items-center gap-4">
+            <span class="material-symbols-outlined text-primary text-3xl">
+              flight_takeoff
+            </span>
+          </div>
+          <nav class="hidden md:flex items-center gap-4">
+            <a id="calendar-nav" class="px-3 py-2 rounded-md text-sm font-medium text-slate-700 dark:text-slate-300 hover:bg-primary/10 dark:hover:bg-primary/20 hover:text-primary dark:hover:text-primary transition-colors" href="homepage.html">Home</a>
+            <a class="px-3 py-2 rounded-md text-sm font-medium text-slate-700 dark:text-slate-300 hover:bg-primary/10 dark:hover:bg-primary/20 hover:text-primary dark:hover:text-primary transition-colors" href="calender.html">Trips</a>
+            <a class="px-3 py-2 rounded-md text-sm font-medium text-slate-700 dark:text-slate-300 hover:bg-primary/10 dark:hover:bg-primary/20 hover:text-primary dark:hover:text-primary transition-colors" href="budget.html">Budget</a>
+            <a id="reminders-nav" class="px-3 py-2 rounded-md text-sm font-medium text-slate-700 dark:text-slate-300 hover:bg-primary/10 dark:hover:bg-primary/20 hover:text-primary dark:hover:text-primary transition-colors" href="reminders.html">Reminders</a>
+            <!-- New packing list link -->
+            <a id="packing-nav" class="px-3 py-2 rounded-md text-sm font-medium text-slate-700 dark:text-slate-300 hover:bg-primary/10 dark:hover:bg-primary/20 hover:text-primary dark:hover:text-primary transition-colors" href="packing.html">Packing</a>
+          </nav>
+          <div class="flex items-center gap-4">
+            <!-- User avatar removed per user request -->
+            <a id="logout-button" href="#" class="hidden md:inline-block text-sm font-medium text-slate-700 dark:text-slate-300 hover:text-primary transition-colors">Log&nbsp;Out</a>
+            <button class="md:hidden w-10 h-10 flex items-center justify-center rounded-full text-slate-600 dark:text-slate-400 hover:bg-slate-200/50 dark:hover:bg-slate-800/50 transition-colors">
+              <span class="material-symbols-outlined">menu</span>
+            </button>
+          </div>
+        </div>
+      </div>
+    </header>
+    <main class="flex-grow container mx-auto px-4 sm:px-6 lg:px-8 py-8">
+      <div class="max-w-3xl mx-auto">
+        <div class="mb-8">
+          <h2 class="text-3xl font-bold text-slate-900 dark:text-white">Packing List</h2>
+          <p class="text-slate-500 dark:text-slate-400 mt-2">Manage what you need to pack for each vacation.</p>
+        </div>
+        <!-- Trip selection -->
+        <div class="mb-6">
+          <label for="packing-trip-select" class="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Select Vacation</label>
+          <select id="packing-trip-select" class="w-full rounded-md border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 p-2 focus:outline-none focus:ring-2 focus:ring-primary">
+            <!-- Options populated by app.js -->
+          </select>
+        </div>
+        <!-- Packing items list -->
+        <ul id="packing-items-list" class="mb-6 space-y-2">
+          <!-- Items rendered here -->
+        </ul>
+        <!-- Add new item -->
+        <div class="flex items-center gap-2">
+          <input id="packing-item-input" type="text" placeholder="Add new item" class="flex-grow rounded-md border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 p-2 focus:outline-none focus:ring-2 focus:ring-primary"/>
+          <button id="packing-add-btn" class="bg-primary text-white px-3 py-2 rounded-md text-sm font-semibold hover:opacity-90 transition-opacity flex items-center gap-1">
+            <span class="material-symbols-outlined text-base">add</span>
+            Add
+          </button>
+        </div>
+      </div>
+    </main>
+  </div>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.38.0/dist/umd/supabase.min.js"></script>
+  <script src="supabase-init.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+    <!-- Page title updated for consistent branding -->
+    <!-- Removed brand name from title as requested -->
+    <title>Trips</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com" rel="preconnect"/>
+<link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect"/>
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;700;800&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined" rel="stylesheet"/>
+<script>
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {
+                        "primary": "#13a4ec",
+                        "background-light": "#f6f7f8",
+                        "background-dark": "#101c22",
+                    },
+                    fontFamily: {
+                        "display": ["Plus Jakarta Sans"]
+                    },
+                    borderRadius: {
+                        "DEFAULT": "0.5rem",
+                        "lg": "1rem",
+                        "xl": "1.5rem",
+                        "full": "9999px"
+                    },
+                },
+            },
+        }
+    </script>
+<style>
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+        }
+    </style>
+</head>
+<body class="bg-background-light dark:bg-background-dark font-display text-slate-800 dark:text-slate-200">
+<div class="flex flex-col min-h-screen">
+<header class="sticky top-0 z-10 bg-background-light/80 dark:bg-background-dark/80 backdrop-blur-sm border-b border-slate-200 dark:border-slate-800">
+<div class="container mx-auto px-4 sm:px-6 lg:px-8">
+<div class="flex items-center justify-between h-16">
+<div class="flex items-center gap-4">
+  <!-- Brand icon retained for visual interest, name removed per user request -->
+  <span class="material-symbols-outlined text-primary text-3xl">public</span>
+</div>
+<nav class="hidden md:flex items-center gap-8">
+    <!-- Consistent navigation across the site -->
+    <!-- Use lowercase filenames to avoid file case mismatches on Netlify/Linux hosts -->
+    <a class="text-sm font-medium hover:text-primary transition-colors" href="homepage.html">Home</a>
+    <a class="text-sm font-medium hover:text-primary transition-colors" href="calender.html">Trips</a>
+    <a class="text-sm font-medium hover:text-primary transition-colors" href="budget.html">Budget</a>
+    <!-- Added reminders page link to the nav -->
+    <a id="reminders-nav" class="text-sm font-medium hover:text-primary transition-colors" href="reminders.html">Reminders</a>
+    <!-- Link to packing list page -->
+    <a id="packing-nav" class="text-sm font-medium hover:text-primary transition-colors" href="packing.html">Packing</a>
+</nav>
+<div class="flex items-center gap-4">
+<!-- Removed notifications button.  Reminders and notifications are
+     managed on the dedicated reminders page. -->
+<!-- User avatar removed per user request -->
+<!-- Logout link -->
+<a id="logout-button" href="#" class="hidden md:inline-block text-sm font-medium text-slate-700 dark:text-slate-300 hover:text-primary transition-colors">Log&nbsp;Out</a>
+</div>
+</div>
+</div>
+</header>
+<main class="flex-grow container mx-auto px-4 sm:px-6 lg:px-8 py-8">
+<div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
+<div class="lg:col-span-2">
+<div class="bg-background-light dark:bg-background-dark/50 rounded-lg p-4 sm:p-6">
+<div class="flex justify-between items-center mb-6">
+<h2 class="text-2xl font-bold text-slate-900 dark:text-white">My Vacations</h2>
+                            <!-- Button to create a new trip -->
+                            <button id="new-trip-button" class="bg-primary text-white px-4 py-2 rounded-full text-sm font-semibold hover:opacity-90 transition-opacity flex items-center gap-2">
+                                <span class="material-symbols-outlined text-base">add</span>
+                                New Trip
+                            </button>
+</div>
+<div class="grid grid-cols-1 gap-6">
+  <!-- Search bar for filtering trips.  As the user types a query the list of
+       trip cards will be filtered in real time via JavaScript. -->
+  <div class="mb-4">
+    <label for="trip-search" class="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Search Trips</label>
+    <input id="trip-search" type="text" placeholder="Search by name or location" class="w-full rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-slate-900 p-2 focus:border-primary focus:ring-primary/50" />
+  </div>
+  <!-- All trips card list inserted here.  This container will be populated
+       dynamically via app.js with a card for each trip.  When there are no
+       trips it will remain empty.  Filtering is handled via the search bar. -->
+  <div id="trips-cards" class="grid grid-cols-1 md:grid-cols-2 gap-6"></div>
+
+  <!-- Dynamic calendar card: navigation and day grid are rendered via app.js -->
+  <div class="bg-white dark:bg-slate-900 p-4 rounded-lg shadow-sm">
+    <div class="flex items-center justify-between mb-4">
+      <!-- Previous month button -->
+      <button id="prev-month-btn" class="p-2 rounded-full hover:bg-slate-100 dark:hover:bg-slate-800">
+        <span class="material-symbols-outlined">chevron_left</span>
+      </button>
+      <!-- Label will be populated with the current month and year (e.g. “April 2025”) -->
+      <p id="calendar-month-label" class="font-semibold text-slate-900 dark:text-white"></p>
+      <!-- Next month button -->
+      <button id="next-month-btn" class="p-2 rounded-full hover:bg-slate-100 dark:hover:bg-slate-800">
+        <span class="material-symbols-outlined">chevron_right</span>
+      </button>
+    </div>
+    <!-- Day-of-week headers -->
+    <div class="grid grid-cols-7 gap-1 text-center text-xs font-medium text-slate-500 dark:text-slate-400 mb-1">
+      <div>Sun</div>
+      <div>Mon</div>
+      <div>Tue</div>
+      <div>Wed</div>
+      <div>Thu</div>
+      <div>Fri</div>
+      <div>Sat</div>
+    </div>
+    <!-- Calendar grid will be filled by JS: each day is a <div> element -->
+    <div id="calendar-grid" class="grid grid-cols-7 gap-1 text-center text-sm"></div>
+  </div>
+</div>
+        <div class="mt-8">
+          <h3 class="text-xl font-bold text-slate-900 dark:text-white mb-4">Trip Details</h3>
+          <!-- The trip details card below is intentionally left empty.  Its contents will be
+               populated dynamically via the application script based on the user's trips.
+               This avoids showing placeholder trips when the user has none. -->
+          <div id="trip-details" class="bg-white dark:bg-slate-900 rounded-lg shadow-sm overflow-hidden p-6">
+            <!-- Content inserted via app.js: trip title, dates, description, and actions. -->
+          </div>
+        </div>
+</div>
+</div>
+<aside class="lg:col-span-1 space-y-6">
+  <div class="bg-white dark:bg-slate-900 p-6 rounded-lg shadow-sm">
+    <h3 class="text-xl font-bold text-slate-900 dark:text-white mb-4">Upcoming Trips</h3>
+    <!-- Dynamic upcoming trips list; content will be populated via app.js.  When there are no upcoming trips, a message will be shown. -->
+    <ul id="calendar-upcoming-list" class="space-y-4"></ul>
+  </div>
+</aside>
+</div>
+</main>
+</div>
+
+    <!-- Load application logic -->
+    <!-- Load Supabase library and initialise client -->
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@1.35.7/dist/umd/supabase.min.js"></script>
+    <script src="supabase-init.js"></script>
+    <!-- Load application logic -->
+    <script src="app.js" defer></script>
+
+
+</body></html>

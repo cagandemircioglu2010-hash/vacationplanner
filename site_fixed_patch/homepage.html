@@ -1,0 +1,274 @@
+<!DOCTYPE html>
+<html lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+    <!-- Page title updated: brand removed per user request -->
+    <title>Home</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com" rel="preconnect"/>
+<link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect"/>
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;700;800&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined" rel="stylesheet"/>
+<script>
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {
+                        "primary": "#13a4ec",
+                        "background-light": "#f6f7f8",
+                        "background-dark": "#101c22",
+                    },
+                    fontFamily: {
+                        "display": ["Plus Jakarta Sans"]
+                    },
+                    borderRadius: {
+                        "DEFAULT": "0.5rem",
+                        "lg": "1rem",
+                        "xl": "1.5rem",
+                        "full": "9999px"
+                    },
+                },
+            },
+        }
+    </script>
+<style>
+        .material-symbols-outlined {
+            font-variation-settings:
+                'FILL' 0,
+                'wght' 400,
+                'GRAD' 0,
+                'opsz' 24
+        }
+    </style>
+</head>
+<body class="bg-background-light dark:bg-background-dark font-display text-slate-800 dark:text-slate-200">
+<div class="flex flex-col min-h-screen">
+<header class="bg-white/70 dark:bg-background-dark/70 backdrop-blur-sm sticky top-0 z-10 border-b border-slate-200 dark:border-slate-800">
+<div class="container mx-auto px-4 sm:px-6 lg:px-8">
+<div class="flex items-center justify-between h-16">
+<div class="flex items-center gap-4">
+  <!-- Brand icon retained; name removed per user request -->
+  <span class="material-symbols-outlined text-primary text-3xl">
+                            flight_takeoff
+                        </span>
+</div>
+            <nav class="hidden md:flex items-center gap-4">
+                <!-- Consistent navigation across all pages -->
+                <!-- Use lowercase filenames for navigation links. On Unix hosts the
+                     filesystem is case-sensitive, so ensure the hrefs exactly match
+                     the actual filenames. -->
+                <a id="calendar-nav" class="px-3 py-2 rounded-md text-sm font-medium text-slate-700 dark:text-slate-300 hover:bg-primary/10 dark:hover:bg-primary/20 hover:text-primary dark:hover:text-primary transition-colors" href="homepage.html">Home</a>
+                <a class="px-3 py-2 rounded-md text-sm font-medium text-slate-700 dark:text-slate-300 hover:bg-primary/10 dark:hover:bg-primary/20 hover:text-primary dark:hover:text-primary transition-colors" href="calender.html">Trips</a>
+                <a class="px-3 py-2 rounded-md text-sm font-medium text-slate-700 dark:text-slate-300 hover:bg-primary/10 dark:hover:bg-primary/20 hover:text-primary dark:hover:text-primary transition-colors" href="budget.html">Budget</a>
+                <!-- New link to the dedicated reminders page -->
+                <a id="reminders-nav" class="px-3 py-2 rounded-md text-sm font-medium text-slate-700 dark:text-slate-300 hover:bg-primary/10 dark:hover:bg-primary/20 hover:text-primary dark:hover:text-primary transition-colors" href="reminders.html">Reminders</a>
+                <!-- Link to packing list page -->
+                <a id="packing-nav" class="px-3 py-2 rounded-md text-sm font-medium text-slate-700 dark:text-slate-300 hover:bg-primary/10 dark:hover:bg-primary/20 hover:text-primary dark:hover:text-primary transition-colors" href="packing.html">Packing</a>
+            </nav>
+<div class="flex items-center gap-4">
+<!-- Notifications button removed.  Notifications and reminders are now accessible via the
+     Reminders page. -->
+                    <!-- User avatar with alt text for better accessibility -->
+                    <!-- Logout link (user avatar removed per user request) -->
+                    <a id="logout-button" href="#" class="hidden md:inline-block text-sm font-medium text-slate-700 dark:text-slate-300 hover:text-primary transition-colors">Log&nbsp;Out</a>
+<button class="md:hidden w-10 h-10 flex items-center justify-center rounded-full text-slate-600 dark:text-slate-400 hover:bg-slate-200/50 dark:hover:bg-slate-800/50 transition-colors">
+<span class="material-symbols-outlined">
+                            menu
+                           </span>
+</button>
+</div>
+</div>
+</div>
+</header>
+<main class="flex-grow container mx-auto px-4 sm:px-6 lg:px-8 py-8">
+<div class="max-w-4xl mx-auto">
+<div class="mb-8">
+<h2 class="text-4xl font-bold text-slate-900 dark:text-white">Welcome back, <span id="welcome-user">Friend</span></h2>
+<p class="text-slate-500 dark:text-slate-400 mt-2">Ready to plan your next adventure?</p>
+</div>
+<!-- Summary statistics for trips and budget.  This section displays the total number of trips,
+     the combined estimated budget and the amount spent across all vacations.  It
+     will be populated dynamically via app.js in renderHomepage(). -->
+<div id="home-summary" class="mb-8 grid grid-cols-1 sm:grid-cols-3 gap-4"></div>
+<div class="mb-8">
+<div class="border-b border-slate-200 dark:border-slate-800">
+                        <nav aria-label="Tabs" class="-mb-px flex space-x-6">
+                            <!-- Tab navigation simplified: Home (Calendar), Trips, Budget -->
+                            <a id="calendar-tab" class="shrink-0 flex flex-col items-center gap-2 border-b-2 border-primary px-1 pb-3 text-sm font-semibold text-primary" href="calender.html">
+                                <span class="material-symbols-outlined">calendar_month</span>
+                                <span>Calendar</span>
+                            </a>
+                            <a class="shrink-0 flex flex-col items-center gap-2 border-b-2 border-transparent px-1 pb-3 text-sm font-medium text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-300 hover:border-slate-300 dark:hover:border-slate-700 transition-colors" href="calender.html">
+                                <span class="material-symbols-outlined">flight</span>
+                                <span>Trips</span>
+                            </a>
+                            <a class="shrink-0 flex flex-col items-center gap-2 border-b-2 border-transparent px-1 pb-3 text-sm font-medium text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-300 hover:border-slate-300 dark:hover:border-slate-700 transition-colors" href="budget.html">
+                                <span class="material-symbols-outlined">paid</span>
+                                <span>Budget</span>
+                            </a>
+                        </nav>
+</div>
+</div>
+<div class="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-12">
+    <!-- Dynamic calendar inserted before static calendars to provide interactive navigation and trip highlighting -->
+    <div class="bg-white dark:bg-background-dark p-4 sm:p-6 rounded-lg shadow-sm space-y-4">
+      <div class="flex items-center justify-between">
+        <h3 class="text-lg font-bold text-slate-900 dark:text-white">Calendar</h3>
+        <button id="new-trip-button" class="bg-primary text-white px-4 py-2 rounded-full text-sm font-semibold hover:opacity-90 transition-opacity flex items-center gap-2">
+          <span class="material-symbols-outlined text-base">add</span>
+          New Trip
+        </button>
+      </div>
+      <div class="bg-white dark:bg-slate-900 p-4 rounded-lg shadow-sm">
+        <div class="flex items-center justify-between mb-4">
+          <button id="prev-month-btn" class="p-2 rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors">
+            <span class="material-symbols-outlined">chevron_left</span>
+          </button>
+          <p id="calendar-month-label" class="font-semibold text-slate-900 dark:text-white"></p>
+          <button id="next-month-btn" class="p-2 rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors">
+            <span class="material-symbols-outlined">chevron_right</span>
+          </button>
+        </div>
+        <div class="grid grid-cols-7 gap-1 text-center text-xs font-medium text-slate-500 dark:text-slate-400 mb-1">
+          <div>Sun</div><div>Mon</div><div>Tue</div><div>Wed</div><div>Thu</div><div>Fri</div><div>Sat</div>
+        </div>
+        <div id="calendar-grid" class="grid grid-cols-7 gap-1 text-center text-sm"></div>
+      </div>
+    </div>
+<div class="bg-white dark:bg-background-dark p-4 sm:p-6 rounded-lg shadow-sm hidden">
+<div class="flex items-center justify-between mb-4">
+<button class="p-2 rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors">
+<span class="material-symbols-outlined text-slate-500 dark:text-slate-400">chevron_left</span>
+</button>
+<p class="font-bold text-slate-800 dark:text-slate-200 text-center">July 2024</p>
+<div class="w-8"></div>
+</div>
+<div class="grid grid-cols-7 gap-1 text-center text-sm">
+<div class="font-medium text-slate-500 dark:text-slate-400">S</div>
+<div class="font-medium text-slate-500 dark:text-slate-400">M</div>
+<div class="font-medium text-slate-500 dark:text-slate-400">T</div>
+<div class="font-medium text-slate-500 dark:text-slate-400">W</div>
+<div class="font-medium text-slate-500 dark:text-slate-400">T</div>
+<div class="font-medium text-slate-500 dark:text-slate-400">F</div>
+<div class="font-medium text-slate-500 dark:text-slate-400">S</div>
+<div class="col-start-4 w-10 h-10 flex items-center justify-center rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer">1</div>
+<div class="w-10 h-10 flex items-center justify-center rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer">2</div>
+<div class="w-10 h-10 flex items-center justify-center rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer">3</div>
+<div class="w-10 h-10 flex items-center justify-center rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer">4</div>
+<div class="w-10 h-10 flex items-center justify-center rounded-full cursor-pointer">5</div>
+<div class="w-10 h-10 flex items-center justify-center rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer">6</div>
+<div class="w-10 h-10 flex items-center justify-center rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer">7</div>
+<div class="w-10 h-10 flex items-center justify-center rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer">8</div>
+<div class="w-10 h-10 flex items-center justify-center rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer">9</div>
+<div class="w-10 h-10 flex items-center justify-center rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer">10</div>
+<div class="w-10 h-10 flex items-center justify-center rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer">11</div>
+<div class="w-10 h-10 flex items-center justify-center rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer">12</div>
+<div class="w-10 h-10 flex items-center justify-center rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer">13</div>
+<div class="w-10 h-10 flex items-center justify-center rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer">14</div>
+<div class="w-10 h-10 flex items-center justify-center rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer">15</div>
+<div class="w-10 h-10 flex items-center justify-center rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer">16</div>
+<div class="w-10 h-10 flex items-center justify-center rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer">17</div>
+<div class="w-10 h-10 flex items-center justify-center rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer">18</div>
+<div class="w-10 h-10 flex items-center justify-center rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer">19</div>
+<div class="w-10 h-10 flex items-center justify-center rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer">20</div>
+<div class="w-10 h-10 flex items-center justify-center rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer">21</div>
+<div class="w-10 h-10 flex items-center justify-center rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer">22</div>
+<div class="w-10 h-10 flex items-center justify-center rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer">23</div>
+<div class="w-10 h-10 flex items-center justify-center rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer">24</div>
+<div class="w-10 h-10 flex items-center justify-center rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer">25</div>
+<div class="w-10 h-10 flex items-center justify-center rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer">26</div>
+<div class="w-10 h-10 flex items-center justify-center rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer">27</div>
+<div class="w-10 h-10 flex items-center justify-center rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer">28</div>
+<div class="w-10 h-10 flex items-center justify-center rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer">29</div>
+<div class="w-10 h-10 flex items-center justify-center rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer">30</div>
+</div>
+</div>
+<div class="bg-white dark:bg-background-dark p-4 sm:p-6 rounded-lg shadow-sm hidden">
+<div class="flex items-center justify-between mb-4">
+<div class="w-8"></div>
+<p class="font-bold text-slate-800 dark:text-slate-200 text-center">August 2024</p>
+<button class="p-2 rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors">
+<span class="material-symbols-outlined text-slate-500 dark:text-slate-400">chevron_right</span>
+</button>
+</div>
+<div class="grid grid-cols-7 gap-1 text-center text-sm">
+<div class="font-medium text-slate-500 dark:text-slate-400">S</div>
+<div class="font-medium text-slate-500 dark:text-slate-400">M</div>
+<div class="font-medium text-slate-500 dark:text-slate-400">T</div>
+<div class="font-medium text-slate-500 dark:text-slate-400">W</div>
+<div class="font-medium text-slate-500 dark:text-slate-400">T</div>
+<div class="font-medium text-slate-500 dark:text-slate-400">F</div>
+<div class="font-medium text-slate-500 dark:text-slate-400">S</div>
+<div class="col-start-5 w-10 h-10 flex items-center justify-center rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer">1</div>
+<div class="w-10 h-10 flex items-center justify-center rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer">2</div>
+<div class="w-10 h-10 flex items-center justify-center rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer">3</div>
+<div class="w-10 h-10 flex items-center justify-center rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer">4</div>
+<div class="w-10 h-10 flex items-center justify-center rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer">5</div>
+<div class="w-10 h-10 flex items-center justify-center rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer">6</div>
+<div class="w-10 h-10 flex items-center justify-center rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer">7</div>
+<div class="w-10 h-10 flex items-center justify-center rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer">8</div>
+<div class="w-10 h-10 flex items-center justify-center rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer">9</div>
+<div class="w-10 h-10 flex items-center justify-center rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer">10</div>
+<div class="w-10 h-10 flex items-center justify-center rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer">11</div>
+<div class="w-10 h-10 flex items-center justify-center rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer">12</div>
+<div class="w-10 h-10 flex items-center justify-center rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer">13</div>
+<div class="w-10 h-10 flex items-center justify-center rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer">14</div>
+<div class="w-10 h-10 flex items-center justify-center rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer">15</div>
+<div class="w-10 h-10 flex items-center justify-center rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer">16</div>
+<div class="w-10 h-10 flex items-center justify-center rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer">17</div>
+<div class="w-10 h-10 flex items-center justify-center rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer">18</div>
+<div class="w-10 h-10 flex items-center justify-center rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer">19</div>
+<div class="w-10 h-10 flex items-center justify-center rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer">20</div>
+<div class="w-10 h-10 flex items-center justify-center rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer">21</div>
+<div class="w-10 h-10 flex items-center justify-center rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer">22</div>
+<div class="w-10 h-10 flex items-center justify-center rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer">23</div>
+<div class="w-10 h-10 flex items-center justify-center rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer">24</div>
+<div class="w-10 h-10 flex items-center justify-center rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer">25</div>
+<div class="w-10 h-10 flex items-center justify-center rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer">26</div>
+<div class="w-10 h-10 flex items-center justify-center rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer">27</div>
+<div class="w-10 h-10 flex items-center justify-center rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer">28</div>
+<div class="w-10 h-10 flex items-center justify-center rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer">29</div>
+<div class="w-10 h-10 flex items-center justify-center rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer">30</div>
+<div class="w-10 h-10 flex items-center justify-center rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer">31</div>
+</div>
+</div>
+</div>
+</div>
+<div class="mt-12">
+  <h3 class="text-2xl font-bold text-slate-900 dark:text-white mb-6">Upcoming Trips</h3>
+  <!-- Dynamic upcoming trips will be injected into this container by app.js -->
+  <div id="home-upcoming" class="space-y-4"></div>
+</div>
+<!-- New section for upcoming reminders.  This will display the next few reminders across all trips.  Populated in app.js via renderHomepage(). -->
+<div class="mt-12">
+  <h3 class="text-2xl font-bold text-slate-900 dark:text-white mb-6">Upcoming Reminders</h3>
+  <div id="home-upcoming-reminders" class="space-y-4"></div>
+</div>
+
+  <!-- Recent trips section.  Displays the most recently viewed vacations (up to 5) so users can quickly
+       jump back into planning.  Populated dynamically in renderHomepage() via a queue stored in
+       localStorage. -->
+  <div class="mt-12">
+    <h3 class="text-2xl font-bold text-slate-900 dark:text-white mb-6">Recent Trips</h3>
+    <div id="home-recent-trips" class="space-y-4"></div>
+  </div>
+
+  <!-- Expense summary section.  Presents a breakdown of spending by category across all trips.  The
+       matrix is computed in app.js using a two‑dimensional array and displayed here as a simple
+       table.  This demonstrates the use of multidimensional collections and key‑value mappings. -->
+  <div class="mt-12">
+    <h3 class="text-2xl font-bold text-slate-900 dark:text-white mb-6">Expense Summary</h3>
+    <div id="home-expense-summary" class="overflow-x-auto"></div>
+  </div>
+</div>
+</main>
+</div>
+
+    <!-- Load Supabase library and initialise client -->
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@1.35.7/dist/umd/supabase.min.js"></script>
+    <script src="supabase-init.js"></script>
+    <!-- Load application logic -->
+    <script src="app.js" defer></script>
+
+</body></html>
