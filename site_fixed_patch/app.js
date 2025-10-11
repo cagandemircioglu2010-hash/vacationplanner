@@ -67,6 +67,7 @@ const KEY_USERS = "wl_users";                  // [{email, name, passHash}]
 const KEY_SESSION = "wl_session";              // {email}
 const tripsKey = (email) => `wl_trips_${email}`;        // [{...trip}]
 const expensesKey = (tripId) => `wl_exp_${tripId}`;     // [{...expense}]
+const expensesDirtyKey = (tripId) => `wl_exp_dirty_${tripId}`; // boolean dirty flag
 const remindersKey = (email) => `wl_rem_${email}`;      // [{...reminder}]
 const selectedTripKey = (email) => `wl_selected_trip_${email}`; // last chosen trip id
 const packingKey = (tripId) => `wl_pack_${tripId}`;     // [{...packing item}]
@@ -239,7 +240,7 @@ async function readExpensesFromSupabase(email, tripId) {
    * @returns {Promise<Array<Object>>} Array of expense objects
    */
   const supabase = window.supabaseClient;
-  if (!supabase || !tripId) return [];
+  if (!supabase || !tripId) return null;
   try {
     const { data, error } = await supabase
       .from('expenses')
@@ -247,12 +248,12 @@ async function readExpensesFromSupabase(email, tripId) {
       .match({ email: email, trip_id: tripId });
     if (error) {
       console.error('Error reading expenses from Supabase:', error);
-      return [];
+      return null;
     }
     return data ?? [];
   } catch (err) {
     console.error('Error reading expenses from Supabase:', err);
-    return [];
+    return null;
   }
 }
 
@@ -262,7 +263,7 @@ async function readRemindersFromSupabase(email) {
    *
    * Queries the `reminders` table for rows where the `email` column
    * matches the provided email.  If no Supabase client has been
-   * initialised, an empty array is returned.  Only reminders created
+   * initialised, `null` is returned.  Only reminders created
    * by this user are returned; filtering by trip id is done in
    * wireRemindersPage().
    *
@@ -270,17 +271,17 @@ async function readRemindersFromSupabase(email) {
    * @returns {Promise<Array<Object>>} Array of reminder objects
    */
   const supabase = window.supabaseClient;
-  if (!supabase || !email) return [];
+  if (!supabase || !email) return null;
   try {
     const { data, error } = await supabase.from('reminders').select().eq('email', email);
     if (error) {
       console.error('Error reading reminders from Supabase:', error);
-      return [];
+      return null;
     }
     return data ?? [];
   } catch (err) {
     console.error('Error reading reminders from Supabase:', err);
-    return [];
+    return null;
   }
 }
 
@@ -291,15 +292,15 @@ async function readPackingFromSupabase(email, tripId) {
    * Each row is expected to include at least an item identifier,
    * the owning user's email and the associated trip id.  If the
    * Supabase client has not been initialised or the query fails,
-   * an empty array is returned so that local functionality can
-   * continue using any cached data.
+   * `null` is returned so that local functionality can continue using
+   * any cached data without clearing it.
    *
    * @param {string} email The user's email address
    * @param {string} tripId The ID of the trip whose packing items are requested
    * @returns {Promise<Array<Object>>} Array of packing item objects
    */
   const supabase = window.supabaseClient;
-  if (!supabase || !email || !tripId) return [];
+  if (!supabase || !email || !tripId) return null;
   try {
     const { data, error } = await supabase
       .from('packing')
@@ -307,12 +308,12 @@ async function readPackingFromSupabase(email, tripId) {
       .match({ email, trip_id: tripId });
     if (error) {
       console.error('Error reading packing items from Supabase:', error);
-      return [];
+      return null;
     }
     return data ?? [];
   } catch (err) {
     console.error('Error reading packing items from Supabase:', err);
-    return [];
+    return null;
   }
 }
 
@@ -409,18 +410,23 @@ async function syncFromSupabase(me) {
   await Promise.all((effectiveTrips || []).map(async (t) => {
     if (!t?.id) return;
     const rows = await readExpensesFromSupabase(me.email, t.id);
-    // Always update the cache so that deletions made on another device are
-    // reflected locally.  The previous implementation only wrote when the
-    // remote array was non-empty, leaving stale expenses in localStorage if
-    // they had been removed elsewhere.
-    store.set(expensesKey(t.id), Array.isArray(rows) ? rows : []);
+    if (rows !== null) {
+      const hasRows = Array.isArray(rows) ? rows.length > 0 : false;
+      const dirty = areExpensesDirty(t.id);
+      if (hasRows || !dirty) {
+        store.set(expensesKey(t.id), Array.isArray(rows) ? rows : []);
+        markExpensesDirty(t.id, false);
+      }
+    }
   }));
 
   // Pull reminders for this user.  Persist an empty array when Supabase
   // returns no rows so that reminders deleted remotely disappear from the
   // local cache as well.
   const rems = await readRemindersFromSupabase(me.email);
-  store.set(remindersKey(me.email), Array.isArray(rems) ? rems : []);
+  if (rems !== null) {
+    store.set(remindersKey(me.email), Array.isArray(rems) ? rems : []);
+  }
 
   // Pull packing lists for each trip.  Packing items are stored in the
   // `packing` table keyed by email and trip id.  Save them into
@@ -430,7 +436,9 @@ async function syncFromSupabase(me) {
   await Promise.all((effectiveTrips || []).map(async (t) => {
     if (!t?.id) return;
     const packs = await readPackingFromSupabase(me.email, t.id);
-    store.set(packingKey(t.id), Array.isArray(packs) ? packs : []);
+    if (packs !== null) {
+      store.set(packingKey(t.id), Array.isArray(packs) ? packs : []);
+    }
   }));
 }
 
@@ -481,7 +489,7 @@ function writeTripsToSupabase(email, trips) {
  * @param {string} tripId The unique ID of the trip
  * @param {Array<Object>} expenses Array of expense objects
  */
-function writeExpensesToSupabase(email, tripId, expenses) {
+async function writeExpensesToSupabase(email, tripId, expenses) {
   /**
    * Persist an array of expenses to Supabase.
    *
@@ -494,27 +502,24 @@ function writeExpensesToSupabase(email, tripId, expenses) {
    * @param {Array<Object>} expenses Array of expense objects
    */
   const supabase = window.supabaseClient;
-  if (!supabase || !email || !tripId || !Array.isArray(expenses)) return;
-  (async () => {
-    try {
-      // Remove all existing expenses for this user and trip before upserting the new set.
-      // Without deleting stale rows, removed expenses would reappear on reload.
-      await supabase.from('expenses').delete().match({ email, trip_id: tripId });
-    } catch (err) {
-      console.error('Error deleting old expenses from Supabase:', err);
-    }
+  if (!supabase || !email || !tripId || !Array.isArray(expenses)) return null;
+  try {
+    // Remove all existing expenses for this user and trip before upserting the new set.
+    // Without deleting stale rows, removed expenses would reappear on reload.
+    await supabase.from('expenses').delete().match({ email, trip_id: tripId });
     for (const exp of expenses) {
-      try {
-        const record = { ...exp, email, trip_id: tripId };
-        const { error } = await supabase.from('expenses').upsert(record);
-        if (error) {
-          console.error('Error writing expense to Supabase:', error);
-        }
-      } catch (err) {
-        console.error('Error writing expense to Supabase:', err);
+      const record = { ...exp, email, trip_id: tripId };
+      const { error } = await supabase.from('expenses').upsert(record);
+      if (error) {
+        console.error('Error writing expense to Supabase:', error);
+        throw error;
       }
     }
-  })();
+    return true;
+  } catch (err) {
+    console.error('Error writing expense to Supabase:', err);
+    throw err;
+  }
 }
 
 function writePackingToSupabase(email, tripId, items) {
@@ -1396,6 +1401,21 @@ function getExpenses(tripId) {
   }
   return store.get(expensesKey(tripId), []) || [];
 }
+
+function areExpensesDirty(tripId) {
+  if (!tripId) return false;
+  return Boolean(store.get(expensesDirtyKey(tripId), false));
+}
+
+function markExpensesDirty(tripId, dirty) {
+  if (!tripId) return;
+  if (dirty) {
+    store.set(expensesDirtyKey(tripId), true);
+  } else {
+    store.remove(expensesDirtyKey(tripId));
+  }
+}
+
 function saveExpenses(tripId, rows) {
   // Skip persistence when there is no active trip; this function can be called
   // while the UI is still loading.  Also normalise the payload so we always
@@ -1406,12 +1426,21 @@ function saveExpenses(tripId, rows) {
   const list = Array.isArray(rows) ? rows : [];
   // Persist expenses to localStorage
   store.set(expensesKey(tripId), list);
+  markExpensesDirty(tripId, true);
   // Also persist expenses to Supabase.  Derive the currently
   // authenticated user's email from the session.  If no session
   // exists or the Supabase client isn't initialised, this call does nothing.
   const sess = getSession();
   if (sess && sess.email) {
-    writeExpensesToSupabase(sess.email, tripId, list);
+    const syncPromise = writeExpensesToSupabase(sess.email, tripId, list);
+    if (syncPromise && typeof syncPromise.then === 'function') {
+      syncPromise.then(() => {
+        markExpensesDirty(tripId, false);
+      }).catch(() => {
+        // Leave the dirty flag set so that local data is preserved until a
+        // successful sync completes.
+      });
+    }
   }
 }
 
@@ -2518,7 +2547,11 @@ function maybeWireCalendar(me) {
         // Remove associated expenses and reminders
         const expKey = expensesKey(trip.id);
         store.remove(expKey);
-        writeExpensesToSupabase(me.email, trip.id, []);
+        markExpensesDirty(trip.id, false);
+        const syncPromise = writeExpensesToSupabase(me.email, trip.id, []);
+        if (syncPromise && typeof syncPromise.catch === 'function') {
+          syncPromise.catch(() => {});
+        }
         const remsAll = store.get(remindersKey(me.email), []) || [];
         const filteredRems = remsAll.filter(r => r.tripId !== trip.id);
         store.set(remindersKey(me.email), filteredRems);
