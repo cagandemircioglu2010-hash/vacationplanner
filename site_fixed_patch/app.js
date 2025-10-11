@@ -2645,8 +2645,11 @@ document.addEventListener("DOMContentLoaded", async () => {
         if (container) container.innerHTML = '';
       }
     }
-    // Refresh budget page bindings if fields are present
-    if (qs('#vacation-name')) {
+    // Refresh budget page bindings if fields are present.  The budget page now
+    // uses the "vacation-select" <select> element instead of the legacy
+    // "vacation-name" input, so detect the new ID when deciding whether to
+    // rewire the page after a history navigation.
+    if (qs('#vacation-select')) {
       if (sess) {
         wireBudgetPage(sess);
       }
