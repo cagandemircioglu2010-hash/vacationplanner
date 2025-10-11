@@ -68,6 +68,7 @@ const KEY_SESSION = "wl_session";              // {email}
 const tripsKey = (email) => `wl_trips_${email}`;        // [{...trip}]
 const expensesKey = (tripId) => `wl_exp_${tripId}`;     // [{...expense}]
 const remindersKey = (email) => `wl_rem_${email}`;      // [{...reminder}]
+const packingKey = (tripId) => `wl_pack_${tripId}`;     // [{...packingItem}]
 
 // Keep a record of recently viewed trip IDs for each user.  This queue stores
 // up to the last five trips visited on the budget page.  It is used on the
@@ -118,6 +119,14 @@ function getReminders(email) {
 // backend and local storage acts as a cache after syncFromSupabase().
 function getExpenses(tripId) {
   return store.get(expensesKey(tripId), []) || [];
+}
+
+// Retrieve all packing items for a trip from localStorage.  Packing lists
+// are cached locally so the packing page can be used offline.  The
+// Supabase backend is the source of truth and synchronisation happens via
+// syncFromSupabase() and writePackingToSupabase().
+function getPackingItems(tripId) {
+  return store.get(packingKey(tripId), []) || [];
 }
 
 /*
@@ -276,6 +285,41 @@ async function readRemindersFromSupabase(email) {
   }
 }
 
+async function readPackingFromSupabase(email, tripId) {
+  /**
+   * Retrieve all packing list entries for a given trip from Supabase.
+   *
+   * Packing rows are stored in the `packing` table keyed by the owning
+   * user's email and the trip identifier.  Each row stores a single
+   * item with its packed state.  The client mirrors these rows into
+   * localStorage so the packing page can work offline.
+   *
+   * @param {string} email The user's email address
+   * @param {string} tripId The ID of the trip to fetch packing items for
+   * @returns {Promise<Array<Object>>} Array of packing item objects
+   */
+  const supabase = window.supabaseClient;
+  if (!supabase || !email || !tripId) return [];
+  try {
+    const { data, error } = await supabase
+      .from('packing')
+      .select()
+      .match({ email, trip_id: tripId });
+    if (error) {
+      console.error('Error reading packing list from Supabase:', error);
+      return [];
+    }
+    return (data ?? []).map((row) => ({
+      id: row.id,
+      name: row.name ?? '',
+      packed: Boolean(row.packed)
+    }));
+  } catch (err) {
+    console.error('Error reading packing list from Supabase:', err);
+    return [];
+  }
+}
+
 async function syncFromSupabase(me) {
   if (!me?.email) return;
   // Pull trips
@@ -303,9 +347,7 @@ async function syncFromSupabase(me) {
   // localStorage so the packing page can access them offline.
   for (const t of trips) {
     const packs = await readPackingFromSupabase(me.email, t.id);
-    if (packs.length) {
-      store.set(packingKey(t.id), packs);
-    }
+    store.set(packingKey(t.id), packs || []);
   }
 }
 
@@ -422,6 +464,47 @@ function writeRemindersToSupabase(email, reminders) {
         }
       } catch (err) {
         console.error('Error writing reminder to Supabase:', err);
+      }
+    }
+  })();
+}
+
+function writePackingToSupabase(email, tripId, items) {
+  /**
+   * Persist packing list items for a trip to Supabase.
+   *
+   * The packing list is stored as individual rows in the `packing` table
+   * keyed by the user email and trip id.  To keep the table in sync with
+   * the local cache we delete any previous rows for the trip before
+   * upserting the new set of items.
+   *
+   * @param {string} email The owning user's email
+   * @param {string} tripId The identifier of the trip
+   * @param {Array<Object>} items Array of packing list items
+   */
+  const supabase = window.supabaseClient;
+  if (!supabase || !email || !tripId || !Array.isArray(items)) return;
+  (async () => {
+    try {
+      await supabase.from('packing').delete().match({ email, trip_id: tripId });
+    } catch (err) {
+      console.error('Error deleting old packing rows from Supabase:', err);
+    }
+    for (const item of items) {
+      try {
+        const record = {
+          id: item.id,
+          name: item.name ?? '',
+          packed: Boolean(item.packed),
+          email,
+          trip_id: tripId
+        };
+        const { error } = await supabase.from('packing').upsert(record);
+        if (error) {
+          console.error('Error writing packing item to Supabase:', error);
+        }
+      } catch (err) {
+        console.error('Error writing packing item to Supabase:', err);
       }
     }
   })();
@@ -2479,6 +2562,153 @@ function wireRemindersPage(me) {
     });
   }
   // Initial render
+  renderList();
+}
+
+function wirePackingPage(me) {
+  const tripSelect = qs('#packing-trip-select');
+  const listEl = qs('#packing-items-list');
+  const inputEl = qs('#packing-item-input');
+  const addBtn = qs('#packing-add-btn');
+
+  if (!tripSelect || !listEl) return; // not on packing page
+
+  const trips = getTrips(me.email) || [];
+  tripSelect.innerHTML = '';
+
+  const placeholder = document.createElement('option');
+  placeholder.value = '';
+  placeholder.textContent = trips.length ? 'Select a vacation' : 'No vacations available';
+  tripSelect.appendChild(placeholder);
+
+  trips.forEach((trip) => {
+    const opt = document.createElement('option');
+    opt.value = trip.id;
+    opt.textContent = trip.name || 'Untitled trip';
+    tripSelect.appendChild(opt);
+  });
+
+  if (!trips.length) {
+    listEl.innerHTML = '';
+    const empty = document.createElement('li');
+    empty.className = 'text-sm text-slate-500 dark:text-slate-400';
+    empty.textContent = 'Create a vacation to start a packing list.';
+    listEl.appendChild(empty);
+    if (addBtn) addBtn.disabled = true;
+    if (inputEl) inputEl.disabled = true;
+    return;
+  }
+
+  if (addBtn) addBtn.disabled = false;
+  if (inputEl) inputEl.disabled = false;
+
+  const persist = (tripId, items) => {
+    store.set(packingKey(tripId), items);
+    writePackingToSupabase(me.email, tripId, items);
+  };
+
+  const renderList = () => {
+    listEl.innerHTML = '';
+    const tripId = tripSelect.value;
+    if (!tripId) {
+      const empty = document.createElement('li');
+      empty.className = 'text-sm text-slate-500 dark:text-slate-400';
+      empty.textContent = 'Select a vacation to manage its packing list.';
+      listEl.appendChild(empty);
+      return;
+    }
+
+    const items = getPackingItems(tripId);
+    if (!items.length) {
+      const empty = document.createElement('li');
+      empty.className = 'text-sm text-slate-500 dark:text-slate-400';
+      empty.textContent = 'No packing items yet. Add one below to get started.';
+      listEl.appendChild(empty);
+      return;
+    }
+
+    items.forEach((item) => {
+      const li = document.createElement('li');
+      li.className = 'flex items-center justify-between gap-3 p-3 rounded-lg bg-gray-100 dark:bg-gray-800';
+
+      const label = document.createElement('label');
+      label.className = 'flex items-center gap-2 flex-1 cursor-pointer';
+
+      const checkbox = document.createElement('input');
+      checkbox.type = 'checkbox';
+      checkbox.className = 'rounded border-slate-300 text-primary focus:ring-primary';
+      checkbox.checked = Boolean(item.packed);
+
+      const span = document.createElement('span');
+      span.className = checkbox.checked
+        ? 'line-through text-slate-500 dark:text-slate-400'
+        : 'text-slate-700 dark:text-slate-200';
+      span.textContent = item.name || 'Unnamed item';
+
+      checkbox.addEventListener('change', () => {
+        const updated = items.map((it) =>
+          it.id === item.id ? { ...it, packed: checkbox.checked } : it
+        );
+        persist(tripId, updated);
+        renderList();
+      });
+
+      label.appendChild(checkbox);
+      label.appendChild(span);
+
+      const delBtn = document.createElement('button');
+      delBtn.className = 'text-sm text-red-500 hover:text-red-600';
+      delBtn.textContent = 'Remove';
+      delBtn.addEventListener('click', (ev) => {
+        ev.preventDefault();
+        const updated = items.filter((it) => it.id !== item.id);
+        persist(tripId, updated);
+        renderList();
+      });
+
+      li.appendChild(label);
+      li.appendChild(delBtn);
+      listEl.appendChild(li);
+    });
+  };
+
+  tripSelect.addEventListener('change', () => {
+    renderList();
+  });
+
+  const addItem = () => {
+    const tripId = tripSelect.value;
+    if (!tripId) return;
+    const text = (inputEl?.value || '').trim();
+    if (!text) return;
+
+    const items = getPackingItems(tripId);
+    const newItem = { id: uid('pack'), name: text, packed: false };
+    const updated = [...items, newItem];
+    persist(tripId, updated);
+    if (inputEl) inputEl.value = '';
+    renderList();
+  };
+
+  if (addBtn) {
+    addBtn.addEventListener('click', (ev) => {
+      ev.preventDefault();
+      addItem();
+    });
+  }
+
+  if (inputEl) {
+    inputEl.addEventListener('keydown', (ev) => {
+      if (ev.key === 'Enter') {
+        ev.preventDefault();
+        addItem();
+      }
+    });
+  }
+
+  if (trips.length) {
+    tripSelect.value = trips[0]?.id || '';
+  }
   renderList();
 }
 
