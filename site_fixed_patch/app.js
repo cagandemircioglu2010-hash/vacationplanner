@@ -402,25 +402,27 @@ async function syncFromSupabase(me) {
   // Pull expenses for each trip
   for (const t of effectiveTrips) {
     const rows = await readExpensesFromSupabase(me.email, t.id);
-    if (rows.length) {
-      store.set(`wl_exp_${t.id}`, rows); // uses your existing storage key
-    }
+    // Always update the cache so that deletions made on another device are
+    // reflected locally.  The previous implementation only wrote when the
+    // remote array was non-empty, leaving stale expenses in localStorage if
+    // they had been removed elsewhere.
+    store.set(`wl_exp_${t.id}`, Array.isArray(rows) ? rows : []); // uses your existing storage key
   }
 
-  // Pull reminders for this user
+  // Pull reminders for this user.  Persist an empty array when Supabase
+  // returns no rows so that reminders deleted remotely disappear from the
+  // local cache as well.
   const rems = await readRemindersFromSupabase(me.email);
-  if (rems.length) {
-    store.set(remindersKey(me.email), rems);
-  }
+  store.set(remindersKey(me.email), Array.isArray(rems) ? rems : []);
 
   // Pull packing lists for each trip.  Packing items are stored in the
   // `packing` table keyed by email and trip id.  Save them into
-  // localStorage so the packing page can access them offline.
+  // localStorage so the packing page can access them offline.  As with
+  // expenses and reminders, persist an empty array when the remote store has
+  // no items so that deletions made elsewhere are mirrored locally.
   for (const t of effectiveTrips) {
     const packs = await readPackingFromSupabase(me.email, t.id);
-    if (packs.length) {
-      store.set(packingKey(t.id), packs);
-    }
+    store.set(packingKey(t.id), Array.isArray(packs) ? packs : []);
   }
 }
 
