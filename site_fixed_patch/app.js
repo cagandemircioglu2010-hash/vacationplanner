@@ -2692,36 +2692,53 @@ document.addEventListener("DOMContentLoaded", async () => {
   // Initialise exchange rates so that budget pages display converted values.  We await
   // this call here so that the initial render uses up‑to‑date rates.  If the
   // fetch fails the converter falls back to a 1:1 rate.
-  await currencyConverter.init();
+  // Start currency conversion initialisation but do not block UI wiring on the
+  // network request.  Rates will be applied once the promise resolves.
+  const currencyInitPromise = currencyConverter.init().catch((err) => {
+    console.error('Currency rate initialisation failed:', err);
+  });
 
-  // Page-specific
+  // Page-specific wiring that should happen immediately so forms and buttons
+  // respond even while background fetches are running.
   await handleRegisterPage();
   await handleLoginPage();
 
-  // Page-specific setup based on authentication state.  Some features, like
-  // editing trips or budgeting, require a logged‑in user, but the calendar
-  // should still render even when no session exists.  To support this we
-  // conditionally wire up authenticated features and always call
-  // maybeWireCalendar().
+  const hasHomepageShell = Boolean(qs('#home-summary'));
+
   if (me) {
-    // Synchronise trips and expenses from Supabase for this user
-    await syncFromSupabase(me);
+    // Provide editing/submission capabilities straight away using any locally
+    // cached data.  Remote data will be merged in once synchronisation
+    // completes and the relevant UI will be re-rendered below.
     preloadAddVacationFormForEdit(me);
     wireAddVacationPage(me);
-    const hasHomepageShell = Boolean(qs('#home-summary'));
+    if (hasHomepageShell) {
+      renderHomepage(me);
+    }
+  }
+
+  // Always attempt to wire the calendar with whatever data is currently
+  // available.  This ensures the grid renders immediately rather than waiting
+  // for asynchronous operations to finish.
+  maybeWireCalendar(me);
+
+  // Wait for currency rates so budget calculations use the latest values.
+  await currencyInitPromise;
+
+  if (me) {
+    // Synchronise trips and related data from Supabase, then refresh any UI
+    // that depends on the merged dataset.
+    await syncFromSupabase(me);
+    preloadAddVacationFormForEdit(me);
     if (hasHomepageShell) {
       renderHomepage(me);
     }
     wireBudgetPage(me);
-    // Wire the reminders page if present
     wireRemindersPage(me);
-    // Wire the packing list page if present
     wirePackingPage(me);
   }
-  
-  // Always attempt to wire the calendar.  maybeWireCalendar() now
-  // gracefully handles missing session information by falling back to
-  // an empty trip list.
+
+  // Rebuild the calendar after remote data loads so new trips appear without a
+  // full page refresh.
   maybeWireCalendar(me);
 
   // When navigating via browser history (e.g. using the Back button),
