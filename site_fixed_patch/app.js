@@ -276,16 +276,97 @@ async function readRemindersFromSupabase(email) {
   }
 }
 
+function normalizeTripFromSupabase(trip) {
+  if (!trip || typeof trip !== 'object') return null;
+  const normalized = { ...trip };
+  if (normalized.start_date && !normalized.startDate) normalized.startDate = normalized.start_date;
+  if (normalized.end_date && !normalized.endDate) normalized.endDate = normalized.end_date;
+  if (normalized.created_at && !normalized.createdAt) normalized.createdAt = normalized.created_at;
+  if (normalized.updated_at && !normalized.updatedAt) normalized.updatedAt = normalized.updated_at;
+  delete normalized.start_date;
+  delete normalized.end_date;
+  delete normalized.created_at;
+  delete normalized.updated_at;
+
+  if (!normalized.days && normalized.startDate && normalized.endDate) {
+    const startTime = new Date(normalized.startDate).getTime();
+    const endTime = new Date(normalized.endDate).getTime();
+    if (Number.isFinite(startTime) && Number.isFinite(endTime)) {
+      const msPerDay = 1000 * 60 * 60 * 24;
+      const span = Math.round((endTime - startTime) / msPerDay) + 1;
+      normalized.days = Math.max(1, span);
+    }
+  }
+  return normalized;
+}
+
+function tripTimestamp(trip) {
+  if (!trip) return 0;
+  const candidates = [trip.updatedAt, trip.createdAt, trip.updated_at, trip.created_at];
+  for (const value of candidates) {
+    if (!value) continue;
+    const ts = new Date(value).getTime();
+    if (Number.isFinite(ts)) return ts;
+  }
+  return 0;
+}
+
+function mergeTripCollections(localTrips = [], remoteTrips = []) {
+  const merged = new Map();
+  remoteTrips.forEach((trip) => {
+    if (trip && trip.id) {
+      merged.set(trip.id, { ...trip });
+    }
+  });
+
+  localTrips.forEach((trip) => {
+    if (!trip || !trip.id) return;
+    const existing = merged.get(trip.id);
+    if (!existing) {
+      merged.set(trip.id, { ...trip });
+      return;
+    }
+
+    const localTs = tripTimestamp(trip);
+    const remoteTs = tripTimestamp(existing);
+
+    if (localTs > remoteTs) {
+      merged.set(trip.id, { ...existing, ...trip });
+    } else if (remoteTs > localTs) {
+      merged.set(trip.id, { ...trip, ...existing });
+    } else {
+      merged.set(trip.id, { ...existing, ...trip });
+    }
+  });
+
+  return Array.from(merged.values());
+}
+
+function serializeTripsForComparison(trips = []) {
+  const clone = trips.map((trip) => ({ ...trip })).sort((a, b) => {
+    const aId = a.id || '';
+    const bId = b.id || '';
+    return aId.localeCompare(bId);
+  });
+  return JSON.stringify(clone);
+}
+
 async function syncFromSupabase(me) {
   if (!me?.email) return;
   // Pull trips
-  const trips = await readTripsFromSupabase(me.email);
-  if (trips.length) {
-    // Save to localStorage (this also re-writes/merges to Firestore via your existing code)
-    saveTrips(me.email, trips); // uses existing function in app.js
+  const remoteRows = await readTripsFromSupabase(me.email);
+  const remoteTrips = remoteRows.map(normalizeTripFromSupabase).filter(Boolean);
+  const localTrips = getTrips(me.email) || [];
+  let effectiveTrips = localTrips;
+  if (remoteTrips.length) {
+    const merged = mergeTripCollections(localTrips, remoteTrips);
+    if (serializeTripsForComparison(merged) !== serializeTripsForComparison(localTrips)) {
+      saveTrips(me.email, merged); // uses existing function in app.js
+    }
+    effectiveTrips = merged;
   }
   // Pull expenses for each trip
-  for (const t of trips) {
+  for (const t of effectiveTrips) {
     const rows = await readExpensesFromSupabase(me.email, t.id);
     if (rows.length) {
       store.set(`wl_exp_${t.id}`, rows); // uses your existing storage key
@@ -301,7 +382,7 @@ async function syncFromSupabase(me) {
   // Pull packing lists for each trip.  Packing items are stored in the
   // `packing` table keyed by email and trip id.  Save them into
   // localStorage so the packing page can access them offline.
-  for (const t of trips) {
+  for (const t of effectiveTrips) {
     const packs = await readPackingFromSupabase(me.email, t.id);
     if (packs.length) {
       store.set(packingKey(t.id), packs);
@@ -707,6 +788,27 @@ function saveTrips(email, trips) {
   writeTripsToSupabase(email, trips);
 }
 
+function wireNewTripButton(defaultRedirect = 'homepage.html') {
+  const btn = qs('#new-trip-button');
+  if (!btn) return;
+
+  const redirect = defaultRedirect || 'homepage.html';
+  // Remove any previous handler we attached so that navigating back to the
+  // page does not stack duplicate listeners.
+  if (btn._wlNewTripHandler) {
+    btn.removeEventListener('click', btn._wlNewTripHandler);
+  }
+
+  btn.dataset.redirect = redirect;
+  const handler = (ev) => {
+    ev.preventDefault();
+    const target = btn.dataset.redirect || redirect;
+    window.location.href = `addvac.html?redirect=${target}`;
+  };
+  btn._wlNewTripHandler = handler;
+  btn.addEventListener('click', handler);
+}
+
 function findTripById(email, id) {
   return getTrips(email).find(t => t.id === id) || null;
 }
@@ -829,7 +931,7 @@ function wireAddVacationPage(me) {
 }
 
 function renderHomepage(me) {
-  const newBtn   = qs("#new-trip-button");
+  wireNewTripButton('homepage.html');
   const tripBox  = qs("#trip-details");
   // The edit and delete buttons may be dynamically recreated when rendering
   // trip details. Instead of capturing static references here (which will
@@ -846,12 +948,6 @@ function renderHomepage(me) {
   on(navBudget, "click",    (e) => { e.preventDefault(); window.location.href = "budget.html"; });
   // Navigate to the dedicated reminders page instead of an anchor on the budget page
   on(navReminders, "click", (e) => { e.preventDefault(); window.location.href = "reminders.html"; });
-
-  on(newBtn, "click", (e) => {
-    e.preventDefault();
-    // Navigate to the add vacation page and return to the home page afterwards.  Use lowercase filenames.
-    window.location.href = "addvac.html?redirect=homepage.html";
-  });
 
   const trips = getTrips(me.email);
   const next = nextUpcomingTrip(trips);
@@ -2124,6 +2220,9 @@ function maybeWireCalendar(me) {
   } catch {
     trips = [];
   }
+  const currentPath = (location.pathname || '').toLowerCase();
+  const calendarRedirect = currentPath.includes('calender') ? 'calender.html' : 'homepage.html';
+  wireNewTripButton(calendarRedirect);
   // 1) Populate the upcoming trips list if present.  We no longer return early
   // because the dynamic calendar should still be wired up when the list exists.
   {
@@ -2296,6 +2395,13 @@ function maybeWireCalendar(me) {
   const prevBtn = qs('#prev-month-btn');
   const nextBtn = qs('#next-month-btn');
   if (gridEl && labelEl) {
+    if (!gridEl.dataset.wlLayoutApplied) {
+      gridEl.style.display = 'grid';
+      gridEl.style.gridTemplateColumns = 'repeat(7, minmax(0, 1fr))';
+      gridEl.style.gap = '0.25rem';
+      gridEl.style.gridAutoRows = 'minmax(2.5rem, auto)';
+      gridEl.dataset.wlLayoutApplied = '1';
+    }
     // Always initialise the current month. Use a fresh Date so modifications
     // do not persist across invocations.
     const currentDate = new Date();
@@ -2355,16 +2461,6 @@ function maybeWireCalendar(me) {
         currentDate.setMonth(currentDate.getMonth() + 1);
         renderCalendar();
       });
-    }
-    // Hook the new trip button.  Do not reuse previous handler to avoid stacking.
-    const newTripBtn = qs('#new-trip-button');
-    if (newTripBtn) {
-      newTripBtn.onclick = (ev) => {
-        ev.preventDefault();
-        const path = (location.pathname || '').toLowerCase();
-        const redirect = path.includes('calender') ? 'calender.html' : 'homepage.html';
-        window.location.href = `addvac.html?redirect=${redirect}`;
-      };
     }
     // Do not return here; allow fallback code to run if legacy placeholders exist
   }
@@ -2612,7 +2708,10 @@ document.addEventListener("DOMContentLoaded", async () => {
     await syncFromSupabase(me);
     preloadAddVacationFormForEdit(me);
     wireAddVacationPage(me);
-    renderHomepage(me);
+    const hasHomepageShell = Boolean(qs('#home-summary'));
+    if (hasHomepageShell) {
+      renderHomepage(me);
+    }
     wireBudgetPage(me);
     // Wire the reminders page if present
     wireRemindersPage(me);
