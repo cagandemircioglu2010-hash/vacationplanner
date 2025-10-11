@@ -119,6 +119,12 @@ function getReminders(email) {
 // an empty array if none are present.  Supabase is the persistent
 // backend and local storage acts as a cache after syncFromSupabase().
 function getExpenses(tripId) {
+  // Guard against falsy/undefined IDs so we never read from a key such as
+  // "wl_exp_undefined".  When no trip is selected we treat the expenses list
+  // as empty and avoid polluting localStorage with phantom records.
+  if (!tripId) {
+    return [];
+  }
   return store.get(expensesKey(tripId), []) || [];
 }
 
@@ -1428,17 +1434,30 @@ function getActiveTripForBudget(me) {
 }
 
 function getExpenses(tripId) {
-  return store.get(expensesKey(tripId), []);
+  // The budget page frequently calls this helper during initial render before
+  // a trip has been selected.  Short-circuit in that scenario to avoid writing
+  // under the synthetic key `wl_exp_undefined`.
+  if (!tripId) {
+    return [];
+  }
+  return store.get(expensesKey(tripId), []) || [];
 }
 function saveExpenses(tripId, rows) {
+  // Skip persistence when there is no active trip; this function can be called
+  // while the UI is still loading.  Also normalise the payload so we always
+  // store an array.
+  if (!tripId) {
+    return;
+  }
+  const list = Array.isArray(rows) ? rows : [];
   // Persist expenses to localStorage
-  store.set(expensesKey(tripId), rows);
+  store.set(expensesKey(tripId), list);
   // Also persist expenses to Supabase.  Derive the currently
   // authenticated user's email from the session.  If no session
   // exists or the Supabase client isn't initialised, this call does nothing.
   const sess = getSession();
   if (sess && sess.email) {
-    writeExpensesToSupabase(sess.email, tripId, rows);
+    writeExpensesToSupabase(sess.email, tripId, list);
   }
 }
 
@@ -1680,7 +1699,10 @@ function wireBudgetPage(me) {
       summaryContainer.innerHTML = '';
       // Gather all expenses
       let allExpenses = [];
-      (trips || []).forEach(t => {
+      // Use the full trip list captured earlier in this function; the older
+      // code referenced an out-of-scope `trips` variable which triggered a
+      // ReferenceError and prevented the dashboard from rendering.
+      (allTrips || []).forEach(t => {
         const exps = getExpenses(t.id) || [];
         allExpenses = allExpenses.concat(exps);
       });
