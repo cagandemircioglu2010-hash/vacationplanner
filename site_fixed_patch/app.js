@@ -1862,7 +1862,7 @@ function wireBudgetPage(me) {
     function updateTopCategories() {
       const listEl = qs('#top-categories-list');
       if (!listEl) return;
-      const rows = getExpenses(activeTrip.id);
+      const rows = activeTrip?.id ? getExpenses(activeTrip.id) : [];
       const coll = new CategoryCollection();
       rows.forEach(r => {
         const catName = (r.category && r.category.trim()) ? r.category.trim() : 'Uncategorised';
@@ -1922,10 +1922,19 @@ function wireBudgetPage(me) {
     }
 
     function summary() {
-    const rows = getExpenses(activeTrip.id);
-    const totalSpent = rows.reduce((s, r) => s + parseCurrency(r.amount), 0);
-    const totalBudget = parseCurrency(totalEl?.value ?? activeTrip.cost ?? 0);
-    const remaining = totalBudget - totalSpent;
+      // When no trip is selected (e.g. a brand new account) `activeTrip`
+      // is null.  Returning an empty data set keeps the UI responsive
+      // instead of throwing when event handlers such as the currency
+      // selector fire without a trip context.
+      const rows = activeTrip?.id ? getExpenses(activeTrip.id) : [];
+      const totalSpent = rows.reduce((s, r) => s + parseCurrency(r.amount), 0);
+      const totalBudget = parseCurrency(
+        // `totalEl.value` is an empty string until populated.  Fall back to
+        // the persisted trip cost so the summary uses the best available
+        // information when the input has not been touched yet.
+        totalEl?.value ? totalEl.value : activeTrip?.cost ?? 0
+      );
+      const remaining = totalBudget - totalSpent;
 
     // Try to update summary cards if present
     const cards = qsa(".rounded-xl p + p.text-3xl");
@@ -1935,6 +1944,29 @@ function wireBudgetPage(me) {
 
   function renderTable() {
     if (!tbody) return;
+
+    // Without this guard, visiting the budget page before creating any
+    // trips caused a "Cannot read properties of null" error whenever the
+    // user interacted with the currency selector.  Reset the UI to an empty
+    // state so the page remains usable until a trip exists.
+    if (!activeTrip || !activeTrip.id) {
+      tbody.innerHTML = "";
+      qsa('[data-summary="remaining"]').forEach(el => {
+        el.textContent = fmtMoney(0);
+      });
+      qsa('[data-summary="spent"]').forEach(el => {
+        el.textContent = fmtMoney(0);
+      });
+      qsa('[data-summary="percent"]').forEach(el => {
+        el.textContent = '0%';
+      });
+      const bar = qs('#budget-usage-bar');
+      if (bar) bar.style.width = '0%';
+      updateExpensesChart();
+      updateTopCategories();
+      return;
+    }
+
     const rows = getExpenses(activeTrip.id);
     tbody.innerHTML = "";
     rows.forEach((r) => {
