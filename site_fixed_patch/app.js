@@ -945,18 +945,24 @@ function wireAddVacationPage(me) {
 
     const trips = getTrips(me.email);
     const editId = form.dataset.editId;
+    let selectionId = null;
     if (editId) {
       const idx = trips.findIndex(t => t.id === editId);
       if (idx >= 0) {
         trips[idx] = { ...trips[idx], name, location: loc, startDate: start, endDate: end, cost, notes, updatedAt: nowISO() };
       }
+      selectionId = editId;
     } else {
       const id = uid("trip");
       const msPerDay = 1000 * 60 * 60 * 24;
       const days = Math.max(1, Math.round((new Date(end) - new Date(start)) / msPerDay) + 1);
       trips.push({ id, name, location: loc, startDate: start, endDate: end, cost, notes, days, createdAt: nowISO(), updatedAt: nowISO() });
+      selectionId = id;
     }
     saveTrips(me.email, trips);
+    if (selectionId) {
+      setStoredTripSelection(me.email, selectionId);
+    }
 
     const params = new URLSearchParams(window.location.search);
     // Redirect to the provided URL or fallback to the lowercase home page
