@@ -68,6 +68,7 @@ const KEY_SESSION = "wl_session";              // {email}
 const tripsKey = (email) => `wl_trips_${email}`;        // [{...trip}]
 const expensesKey = (tripId) => `wl_exp_${tripId}`;     // [{...expense}]
 const remindersKey = (email) => `wl_rem_${email}`;      // [{...reminder}]
+const selectedTripKey = (email) => `wl_selected_trip_${email}`; // last chosen trip id
 
 // Keep a record of recently viewed trip IDs for each user.  This queue stores
 // up to the last five trips visited on the budget page.  It is used on the
@@ -819,6 +820,58 @@ function nextUpcomingTrip(trips) {
   return future.find(t => new Date(t.endDate) >= today) || future[0] || null;
 }
 
+function getStoredTripSelection(email) {
+  if (!email) return '';
+  return store.get(selectedTripKey(email), '') || '';
+}
+
+function setStoredTripSelection(email, tripId) {
+  if (!email) return;
+  if (tripId) {
+    store.set(selectedTripKey(email), tripId);
+  } else {
+    store.remove(selectedTripKey(email));
+  }
+}
+
+function populateTripSelectElement(selectEl, trips, desiredId = '', placeholderText = 'Select a trip') {
+  if (!selectEl) return '';
+  const list = Array.isArray(trips) ? trips.slice() : [];
+  selectEl.innerHTML = '';
+  if (placeholderText !== null) {
+    const placeholder = document.createElement('option');
+    placeholder.value = '';
+    placeholder.textContent = placeholderText;
+    selectEl.appendChild(placeholder);
+  }
+  list.forEach(trip => {
+    if (!trip || !trip.id) return;
+    const opt = document.createElement('option');
+    opt.value = trip.id;
+    opt.textContent = trip.name || 'Unnamed trip';
+    selectEl.appendChild(opt);
+  });
+  selectEl.disabled = list.length === 0;
+  if (list.length === 0) {
+    selectEl.value = '';
+    return '';
+  }
+  let finalId = '';
+  if (desiredId && list.some(t => t.id === desiredId)) {
+    finalId = desiredId;
+  } else {
+    const upcoming = nextUpcomingTrip(list);
+    if (upcoming?.id) {
+      finalId = upcoming.id;
+    }
+  }
+  if (!finalId && list[0]?.id) {
+    finalId = list[0].id;
+  }
+  selectEl.value = finalId || '';
+  return finalId || '';
+}
+
 function preloadAddVacationFormForEdit(me) {
   // Only on Addvac.html
   const form = qs("#vacation-form");
@@ -1281,12 +1334,21 @@ function renderHomepage(me) {
 // ---------- Budget & Expenses ----------
 
 function getActiveTripForBudget(me) {
-  // Try to find selected trip via ?trip=<id>, else use next upcoming
+  if (!me?.email) return null;
   const params = new URLSearchParams(window.location.search);
   const tripId = params.get("trip");
-  const trips = getTrips(me.email);
-  if (tripId) {
-    return trips.find(t => t.id === tripId) || nextUpcomingTrip(trips);
+  const trips = getTrips(me.email) || [];
+  if (!Array.isArray(trips) || trips.length === 0) {
+    return null;
+  }
+  const storedId = getStoredTripSelection(me.email);
+  const candidates = [tripId, storedId];
+  for (const candidate of candidates) {
+    if (!candidate) continue;
+    const match = trips.find(t => t.id === candidate);
+    if (match) {
+      return match;
+    }
   }
   return nextUpcomingTrip(trips);
 }
@@ -1350,7 +1412,45 @@ function wireBudgetPage(me) {
 
   if (!(vacNameEl || totalEl || addBtn || table)) return; // not this page
 
-  const activeTrip = getActiveTripForBudget(me);
+  const allTrips = getTrips(me.email) || [];
+  let activeTrip = getActiveTripForBudget(me);
+
+  const ensureTripQueryMatches = (tripId) => {
+    const url = new URL(window.location.href);
+    if (tripId) {
+      url.searchParams.set('trip', tripId);
+    } else {
+      url.searchParams.delete('trip');
+    }
+    const newUrl = url.pathname + url.search + url.hash;
+    const current = window.location.pathname + window.location.search + window.location.hash;
+    if (newUrl !== current) {
+      window.history.replaceState({}, '', newUrl);
+    }
+  };
+
+  // Populate the trip selector with all trips and remember the user's choice so
+  // the selection persists between visits to the budget and reminders pages.
+  if (vacNameEl) {
+    const selectedId = populateTripSelectElement(vacNameEl, allTrips, activeTrip?.id || getStoredTripSelection(me.email));
+    if (!activeTrip && selectedId) {
+      activeTrip = allTrips.find(t => t.id === selectedId) || null;
+    }
+    setStoredTripSelection(me.email, selectedId || null);
+    ensureTripQueryMatches(selectedId);
+    on(vacNameEl, 'change', (ev) => {
+      const id = ev.target.value;
+      setStoredTripSelection(me.email, id || null);
+      const url = new URL(window.location.href);
+      if (id) {
+        url.searchParams.set('trip', id);
+      } else {
+        url.searchParams.delete('trip');
+      }
+      window.location.href = url.pathname + url.search + url.hash;
+    });
+  }
+
     // Expose the current active trip on the global window object so that
     // helper functions like updateExpensesChart() can access it.  Without
     // this assignment, `updateExpensesChart()` cannot read the locally
@@ -1358,7 +1458,7 @@ function wireBudgetPage(me) {
     // lexical scoping rules.  Storing it globally keeps the state in sync
     // across different functions.  When there is no trip, this will be
     // undefined.
-    window.currentActiveTrip = activeTrip;
+    window.currentActiveTrip = activeTrip || null;
 
     // Maintain a stack of deleted expenses for the current trip.  Each time the user
     // deletes an expense row, the removed record is pushed onto this stack.  An
@@ -1395,10 +1495,12 @@ function wireBudgetPage(me) {
         ev.preventDefault();
         const last = deletedStack.pop();
         if (last) {
-          const rows = getExpenses(activeTrip.id);
-          rows.push(last);
-          saveExpenses(activeTrip.id, rows);
-          renderTable();
+          if (activeTrip?.id) {
+            const rows = getExpenses(activeTrip.id);
+            rows.push(last);
+            saveExpenses(activeTrip.id, rows);
+            renderTable();
+          }
         }
         updateUndoButton();
       };
@@ -1419,24 +1521,7 @@ function wireBudgetPage(me) {
     // trip as the visible text and the trip id as the value.  When the
     // selection changes we redirect to the budget page with a query
     // parameter so the page reloads with the chosen trip.
-    if (vacNameEl) {
-      const userTrips = getTrips(me.email) || [];
-      // Clear existing options and insert a placeholder option
-      vacNameEl.innerHTML = '<option value="">Select a trip</option>';
-      userTrips.forEach(t => {
-        const opt = document.createElement('option');
-        opt.value = t.id;
-        opt.textContent = t.name;
-        vacNameEl.appendChild(opt);
-      });
-      on(vacNameEl, 'change', (ev) => {
-        const id = ev.target.value;
-        if (id) {
-          const path = window.location.pathname;
-          window.location.href = `${path}?trip=${encodeURIComponent(id)}`;
-        }
-      });
-    }
+    // vacNameEl population handled above.
 
     // -------------------------------------------------------------------
     // Recent trips on home page
@@ -1452,9 +1537,9 @@ function wireBudgetPage(me) {
       // exist if the trip was deleted, so filter those out.  We use the
       // original trips array loaded earlier.
       const recentTrips = [];
-      if (Array.isArray(recentIds) && recentIds.length > 0 && Array.isArray(trips)) {
+      if (Array.isArray(recentIds) && recentIds.length > 0 && Array.isArray(allTrips)) {
         recentIds.forEach(rid => {
-          const t = trips.find(tp => tp.id === rid);
+          const t = allTrips.find(tp => tp.id === rid);
           if (t) recentTrips.push(t);
         });
       }
@@ -2496,15 +2581,34 @@ function wireRemindersPage(me) {
   const dateEl    = qs('#rem-new-date');
   const addBtn    = qs('#rem-add-btn');
   if (!tripSelect || !listEl) return; // not on reminders page
-  // Populate trip select with the user's trips
   const trips = getTrips(me.email) || [];
-  tripSelect.innerHTML = '<option value="">Select a trip</option>';
-  trips.forEach(t => {
-    const opt = document.createElement('option');
-    opt.value = t.id;
-    opt.textContent = t.name;
-    tripSelect.appendChild(opt);
-  });
+
+  const syncTripQuery = (tripId) => {
+    const url = new URL(window.location.href);
+    if (tripId) {
+      url.searchParams.set('trip', tripId);
+    } else {
+      url.searchParams.delete('trip');
+    }
+    const newUrl = url.pathname + url.search + url.hash;
+    const current = window.location.pathname + window.location.search + window.location.hash;
+    if (newUrl !== current) {
+      window.history.replaceState({}, '', newUrl);
+    }
+  };
+
+  const candidateId = new URLSearchParams(window.location.search).get('trip') || getStoredTripSelection(me.email);
+  const selectedId = populateTripSelectElement(tripSelect, trips, candidateId);
+  setStoredTripSelection(me.email, selectedId || null);
+  syncTripQuery(selectedId);
+
+  function updateAddButtonState() {
+    if (!addBtn) return;
+    const hasTrip = Boolean(tripSelect.value);
+    addBtn.disabled = !hasTrip;
+    addBtn.classList.toggle('opacity-50', !hasTrip);
+    addBtn.classList.toggle('cursor-not-allowed', !hasTrip);
+  }
   /**
    * Render the list of reminders for the currently selected trip.
    * If no trip is selected the list is cleared.  Each reminder is
@@ -2513,11 +2617,24 @@ function wireRemindersPage(me) {
   function renderList() {
     listEl.innerHTML = '';
     const tripId = tripSelect.value;
-    if (!tripId) return;
+    if (!tripId) {
+      const msg = document.createElement('li');
+      msg.className = 'text-sm text-gray-600 dark:text-gray-400';
+      msg.textContent = trips.length > 0 ? 'Select a trip to view reminders.' : 'Create a trip to add reminders.';
+      listEl.appendChild(msg);
+      return;
+    }
     const allRems = store.get(remindersKey(me.email), []) || [];
     const rems = allRems.filter(r => r.tripId === tripId);
     // sort by date ascending
     rems.sort((a, b) => new Date(a.date) - new Date(b.date));
+    if (rems.length === 0) {
+      const msg = document.createElement('li');
+      msg.className = 'text-sm text-gray-600 dark:text-gray-400';
+      msg.textContent = 'No reminders yet.';
+      listEl.appendChild(msg);
+      return;
+    }
     rems.forEach(r => {
       const li = document.createElement('li');
       li.className = 'flex items-center justify-between p-4 rounded-lg bg-gray-100 dark:bg-gray-800';
@@ -2548,8 +2665,12 @@ function wireRemindersPage(me) {
       listEl.appendChild(li);
     });
   }
-  // When trip selection changes, refresh the reminders list
+  // When trip selection changes, refresh the reminders list and persist the choice
   tripSelect.addEventListener('change', () => {
+    const id = tripSelect.value;
+    setStoredTripSelection(me.email, id || null);
+    syncTripQuery(id);
+    updateAddButtonState();
     renderList();
   });
   // Add new reminder
@@ -2574,6 +2695,7 @@ function wireRemindersPage(me) {
       renderList();
     });
   }
+  updateAddButtonState();
   // Initial render
   renderList();
 }
