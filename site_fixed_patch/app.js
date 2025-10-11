@@ -3106,7 +3106,14 @@ document.addEventListener("DOMContentLoaded", async () => {
   // browsers may restore pages from cache without firing DOMContentLoaded.
   // Reinvoke key page wiring on the pageshow event to ensure the
   // calendar, homepage and budget features are properly initialised.
-  window.addEventListener('pageshow', () => {
+  window.addEventListener('pageshow', (event) => {
+    // Avoid duplicating event listeners by only rewiring when the page is
+    // restored from the back/forward cache.  A normal navigation (where
+    // event.persisted is false) already wired everything during
+    // DOMContentLoaded.
+    if (!event.persisted) {
+      return;
+    }
     const sess = requireSession();
     // Rebuild the dynamic calendar if present
     if (qs('#calendar-grid')) {
@@ -3122,8 +3129,11 @@ document.addEventListener("DOMContentLoaded", async () => {
         if (container) container.innerHTML = '';
       }
     }
-    // Refresh budget page bindings if fields are present
-    if (qs('#vacation-name')) {
+    // Refresh budget page bindings if fields are present.  The budget page now
+    // uses the "vacation-select" <select> element instead of the legacy
+    // "vacation-name" input, so detect the new ID when deciding whether to
+    // rewire the page after a history navigation.
+    if (qs('#vacation-select')) {
       if (sess) {
         wireBudgetPage(sess);
       }
