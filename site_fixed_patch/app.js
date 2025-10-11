@@ -69,6 +69,7 @@ const tripsKey = (email) => `wl_trips_${email}`;        // [{...trip}]
 const expensesKey = (tripId) => `wl_exp_${tripId}`;     // [{...expense}]
 const remindersKey = (email) => `wl_rem_${email}`;      // [{...reminder}]
 const selectedTripKey = (email) => `wl_selected_trip_${email}`; // last chosen trip id
+const packingKey = (tripId) => `wl_pack_${tripId}`;     // [{...packing item}]
 
 // Keep a record of recently viewed trip IDs for each user.  This queue stores
 // up to the last five trips visited on the budget page.  It is used on the
@@ -277,6 +278,38 @@ async function readRemindersFromSupabase(email) {
   }
 }
 
+async function readPackingFromSupabase(email, tripId) {
+  /**
+   * Retrieve packing list items for a given trip from Supabase.
+   *
+   * Each row is expected to include at least an item identifier,
+   * the owning user's email and the associated trip id.  If the
+   * Supabase client has not been initialised or the query fails,
+   * an empty array is returned so that local functionality can
+   * continue using any cached data.
+   *
+   * @param {string} email The user's email address
+   * @param {string} tripId The ID of the trip whose packing items are requested
+   * @returns {Promise<Array<Object>>} Array of packing item objects
+   */
+  const supabase = window.supabaseClient;
+  if (!supabase || !email || !tripId) return [];
+  try {
+    const { data, error } = await supabase
+      .from('packing')
+      .select()
+      .match({ email, trip_id: tripId });
+    if (error) {
+      console.error('Error reading packing items from Supabase:', error);
+      return [];
+    }
+    return data ?? [];
+  } catch (err) {
+    console.error('Error reading packing items from Supabase:', err);
+    return [];
+  }
+}
+
 function normalizeTripFromSupabase(trip) {
   if (!trip || typeof trip !== 'object') return null;
   const normalized = { ...trip };
@@ -469,6 +502,41 @@ function writeExpensesToSupabase(email, tripId, expenses) {
         }
       } catch (err) {
         console.error('Error writing expense to Supabase:', err);
+      }
+    }
+  })();
+}
+
+function writePackingToSupabase(email, tripId, items) {
+  /**
+   * Persist packing list items for a specific trip to Supabase.
+   *
+   * Items are stored in the `packing` table keyed by the user's email
+   * and the associated trip id.  Existing rows for the trip are removed
+   * before inserting the updated list to prevent deleted items from
+   * reappearing on the next sync.
+   *
+   * @param {string} email The email of the user owning the trip
+   * @param {string} tripId The unique identifier of the trip
+   * @param {Array<Object>} items Array of packing item objects
+   */
+  const supabase = window.supabaseClient;
+  if (!supabase || !email || !tripId || !Array.isArray(items)) return;
+  (async () => {
+    try {
+      await supabase.from('packing').delete().match({ email, trip_id: tripId });
+    } catch (err) {
+      console.error('Error deleting old packing items from Supabase:', err);
+    }
+    for (const item of items) {
+      try {
+        const record = { ...item, email, trip_id: tripId };
+        const { error } = await supabase.from('packing').upsert(record);
+        if (error) {
+          console.error('Error writing packing item to Supabase:', error);
+        }
+      } catch (err) {
+        console.error('Error writing packing item to Supabase:', err);
       }
     }
   })();
@@ -838,7 +906,7 @@ function populateTripSelectElement(selectEl, trips, desiredId = '', placeholderT
   if (!selectEl) return '';
   const list = Array.isArray(trips) ? trips.slice() : [];
   selectEl.innerHTML = '';
-  if (placeholderText !== null) {
+  if (placeholderText !== null && list.length === 0) {
     const placeholder = document.createElement('option');
     placeholder.value = '';
     placeholder.textContent = placeholderText;
@@ -1371,6 +1439,21 @@ function saveExpenses(tripId, rows) {
   const sess = getSession();
   if (sess && sess.email) {
     writeExpensesToSupabase(sess.email, tripId, rows);
+  }
+}
+
+function getPackingItems(tripId) {
+  if (!tripId) return [];
+  return store.get(packingKey(tripId), []) || [];
+}
+
+function savePackingItems(tripId, items) {
+  if (!tripId) return;
+  const list = Array.isArray(items) ? items : [];
+  store.set(packingKey(tripId), list);
+  const sess = getSession();
+  if (sess && sess.email) {
+    writePackingToSupabase(sess.email, tripId, list);
   }
 }
 
@@ -2703,6 +2786,122 @@ function wireRemindersPage(me) {
   }
   updateAddButtonState();
   // Initial render
+  renderList();
+}
+
+function wirePackingPage(me) {
+  const tripSelect = qs('#packing-trip-select');
+  const listEl    = qs('#packing-items-list');
+  const inputEl   = qs('#packing-item-input');
+  const addBtn    = qs('#packing-add-btn');
+  if (!tripSelect || !listEl || !inputEl || !addBtn) return; // not on packing page
+
+  const trips = getTrips(me.email) || [];
+  const selectedId = populateTripSelectElement(
+    tripSelect,
+    trips,
+    getStoredTripSelection(me.email),
+    trips.length > 0 ? 'Select a vacation' : 'Create a trip to start packing'
+  );
+  setStoredTripSelection(me.email, selectedId || null);
+
+  function updateAddButtonState() {
+    const hasTrip = Boolean(tripSelect.value);
+    addBtn.disabled = !hasTrip;
+    addBtn.classList.toggle('opacity-50', !hasTrip);
+    addBtn.classList.toggle('cursor-not-allowed', !hasTrip);
+  }
+
+  function renderList() {
+    listEl.innerHTML = '';
+    const tripId = tripSelect.value;
+    if (!tripId) {
+      const msg = document.createElement('li');
+      msg.className = 'text-sm text-slate-600 dark:text-slate-400';
+      msg.textContent = trips.length > 0 ? 'Select a trip to manage your packing list.' : 'Create a trip to start your packing list.';
+      listEl.appendChild(msg);
+      return;
+    }
+
+    const items = getPackingItems(tripId);
+    if (!items || items.length === 0) {
+      const msg = document.createElement('li');
+      msg.className = 'text-sm text-slate-600 dark:text-slate-400';
+      msg.textContent = 'No packing items yet.';
+      listEl.appendChild(msg);
+      return;
+    }
+
+    items.forEach((item) => {
+      if (!item || !item.id) return;
+      const li = document.createElement('li');
+      li.className = 'flex items-center justify-between p-3 bg-white dark:bg-slate-800 rounded-md shadow-sm';
+
+      const left = document.createElement('label');
+      left.className = 'flex items-center gap-2 cursor-pointer';
+
+      const checkbox = document.createElement('input');
+      checkbox.type = 'checkbox';
+      checkbox.className = 'h-4 w-4 text-primary border-slate-300 rounded';
+      checkbox.checked = Boolean(item.packed);
+
+      const nameSpan = document.createElement('span');
+      nameSpan.textContent = item.name || 'Item';
+      nameSpan.className = checkbox.checked
+        ? 'line-through text-slate-500 dark:text-slate-400'
+        : 'text-slate-800 dark:text-slate-100';
+
+      checkbox.addEventListener('change', () => {
+        const updated = getPackingItems(tripId).map((it) =>
+          it.id === item.id ? { ...it, packed: checkbox.checked } : it
+        );
+        savePackingItems(tripId, updated);
+        renderList();
+      });
+
+      left.appendChild(checkbox);
+      left.appendChild(nameSpan);
+      li.appendChild(left);
+
+      const delBtn = document.createElement('button');
+      delBtn.type = 'button';
+      delBtn.className = 'text-sm text-red-500 hover:text-red-700';
+      delBtn.textContent = 'Delete';
+      delBtn.addEventListener('click', (ev) => {
+        ev.preventDefault();
+        const updated = getPackingItems(tripId).filter((it) => it.id !== item.id);
+        savePackingItems(tripId, updated);
+        renderList();
+      });
+      li.appendChild(delBtn);
+
+      listEl.appendChild(li);
+    });
+  }
+
+  tripSelect.addEventListener('change', () => {
+    const id = tripSelect.value;
+    setStoredTripSelection(me.email, id || null);
+    updateAddButtonState();
+    renderList();
+  });
+
+  addBtn.addEventListener('click', (ev) => {
+    ev.preventDefault();
+    const tripId = tripSelect.value;
+    const name = (inputEl.value || '').trim();
+    if (!tripId || !name) {
+      return;
+    }
+    const items = getPackingItems(tripId);
+    const newItem = { id: uid('pack'), name, packed: false };
+    const updated = [...items, newItem];
+    savePackingItems(tripId, updated);
+    inputEl.value = '';
+    renderList();
+  });
+
+  updateAddButtonState();
   renderList();
 }
 
