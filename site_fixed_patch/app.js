@@ -906,7 +906,7 @@ function populateTripSelectElement(selectEl, trips, desiredId = '', placeholderT
   if (!selectEl) return '';
   const list = Array.isArray(trips) ? trips.slice() : [];
   selectEl.innerHTML = '';
-  if (placeholderText !== null) {
+  if (placeholderText !== null && list.length === 0) {
     const placeholder = document.createElement('option');
     placeholder.value = '';
     placeholder.textContent = placeholderText;
