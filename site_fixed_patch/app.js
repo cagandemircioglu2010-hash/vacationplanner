@@ -405,15 +405,16 @@ async function syncFromSupabase(me) {
     }
     effectiveTrips = merged;
   }
-  // Pull expenses for each trip
-  for (const t of effectiveTrips) {
+  // Pull expenses for each trip in parallel to minimise overall sync time.
+  await Promise.all((effectiveTrips || []).map(async (t) => {
+    if (!t?.id) return;
     const rows = await readExpensesFromSupabase(me.email, t.id);
     // Always update the cache so that deletions made on another device are
     // reflected locally.  The previous implementation only wrote when the
     // remote array was non-empty, leaving stale expenses in localStorage if
     // they had been removed elsewhere.
-    store.set(`wl_exp_${t.id}`, Array.isArray(rows) ? rows : []); // uses your existing storage key
-  }
+    store.set(expensesKey(t.id), Array.isArray(rows) ? rows : []);
+  }));
 
   // Pull reminders for this user.  Persist an empty array when Supabase
   // returns no rows so that reminders deleted remotely disappear from the
@@ -426,10 +427,11 @@ async function syncFromSupabase(me) {
   // localStorage so the packing page can access them offline.  As with
   // expenses and reminders, persist an empty array when the remote store has
   // no items so that deletions made elsewhere are mirrored locally.
-  for (const t of effectiveTrips) {
+  await Promise.all((effectiveTrips || []).map(async (t) => {
+    if (!t?.id) return;
     const packs = await readPackingFromSupabase(me.email, t.id);
     store.set(packingKey(t.id), Array.isArray(packs) ? packs : []);
-  }
+  }));
 }
 
 /**
@@ -562,8 +564,9 @@ function writeRemindersToSupabase(email, reminders) {
   /**
    * Persist an array of reminders to Supabase.
    *
-   * Each reminder is upserted into the `reminders` table along with
-   * the user's email.  Errors are logged to the console.
+   * Existing reminders for the user are removed before the new set is
+   * upserted so that deletions made locally are reflected remotely.
+   * Errors are logged to the console.
    *
    * @param {string} email The user's email
    * @param {Array<Object>} reminders Array of reminder objects
@@ -571,16 +574,24 @@ function writeRemindersToSupabase(email, reminders) {
   const supabase = window.supabaseClient;
   if (!supabase || !email || !Array.isArray(reminders)) return;
   (async () => {
-    for (const rem of reminders) {
-      try {
-        const record = { ...rem, email };
-        const { error } = await supabase.from('reminders').upsert(record);
-        if (error) {
-          console.error('Error writing reminder to Supabase:', error);
-        }
-      } catch (err) {
-        console.error('Error writing reminder to Supabase:', err);
+    try {
+      await supabase.from('reminders').delete().match({ email });
+    } catch (err) {
+      console.error('Error deleting old reminders from Supabase:', err);
+    }
+
+    if (!reminders.length) {
+      return;
+    }
+
+    const payload = reminders.map(rem => ({ ...rem, email }));
+    try {
+      const { error } = await supabase.from('reminders').upsert(payload);
+      if (error) {
+        console.error('Error writing reminders to Supabase:', error);
       }
+    } catch (err) {
+      console.error('Error writing reminders to Supabase:', err);
     }
   })();
 }
@@ -603,10 +614,10 @@ function writeRemindersToSupabase(email, reminders) {
 function buildExpenseMatrix(expenses) {
   // Determine unique categories and map them to column indices
   const categoryMap = {};
+  let nextIndex = 0;
   expenses.forEach(exp => {
-    if (exp && exp.category && !(exp.category in categoryMap)) {
-      categoryMap[exp.category] = Object.keys(categoryMap).length;
-    }
+    if (!exp || !exp.category || (exp.category in categoryMap)) return;
+    categoryMap[exp.category] = nextIndex++;
   });
   const categories = Object.keys(categoryMap);
   const numCats = categories.length;
