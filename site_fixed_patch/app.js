@@ -1124,9 +1124,7 @@ function renderHomepage(me) {
     function setTripDetail(trip) {
       if (!trip || !tripBox) return;
       const rangeTxt = `${trip.startDate} - ${trip.endDate}`;
-      // Compose the inner markup for details. We include a placeholder
-      // element with id `weather-info` which will be populated after
-      // fetching weather data. See fetchWeather() below.
+      // Compose the inner markup for details.
       let html = ``;
       html += `<p class="text-sm text-primary font-semibold">${rangeTxt}</p>`;
       html += `<h4 class="text-2xl font-bold">${trip.name}</h4>`;
@@ -1136,9 +1134,7 @@ function renderHomepage(me) {
         html += `Estimated Cost: ${fmtMoney(trip.cost)}`;
       }
       html += `</div>`;
-      // Weather placeholder: initially shows a loading message. It will be
-      // replaced once the weather API returns.
-      // Append trip ID.  Weather information has been removed in this version to simplify the implementation.
+      // Append trip ID.
       html += `<div class="mt-4 text-xs opacity-60">Trip ID: ${trip.id}</div>`;
       // Append action buttons. We include IDs on the buttons so that
       // event delegation can catch clicks. Note: we intentionally do not
@@ -1159,61 +1155,6 @@ function renderHomepage(me) {
       tripBox.dataset.currentTripId = trip.id;
       // Weather fetching has been removed.  If needed in future, reintroduce
       // asynchronous calls here to update additional details.
-    }
-
-    /**
-     * Retrieve current weather information for a location. This helper
-     * performs two asynchronous HTTP requests: first to the Nominatim
-     * geocoding service (OpenStreetMap) to convert the location string
-     * into latitude and longitude, and second to the Open‑Meteo service
-     * to obtain the current weather at those coordinates. The function
-     * returns a descriptive string or a fallback message if any errors
-     * occur. Both services are public and do not require API keys,
-     * although we set a User‑Agent header on the geocoding request per
-     * Nominatim usage guidelines. See https://nominatim.org/release-docs/
-     * for details.
-     *
-     * @param {string} location The human‑readable location (city/country)
-     * @returns {Promise<string>} A promise that resolves to a human
-     *   friendly description of the current weather
-     */
-    async function fetchWeather(location) {
-      try {
-        if (!location) return 'Weather data unavailable';
-        // 1. Geocode the location using Nominatim.
-        const geoUrl = `https://nominatim.openstreetmap.org/search?format=json&limit=1&q=${encodeURIComponent(location)}`;
-        const geoResp = await fetch(geoUrl, {
-          headers: {
-            // Provide a User‑Agent so that the service is not
-            // mistaken for a bot. The email domain is omitted here
-            // for privacy; students should use their own details.
-            'User-Agent': 'IBVacationPlanner/1.0'
-          }
-        });
-        if (!geoResp.ok) throw new Error('Geocoding failed');
-        const geoData = await geoResp.json();
-        if (!Array.isArray(geoData) || geoData.length === 0) {
-          return 'Weather data unavailable';
-        }
-        const { lat, lon } = geoData[0];
-        if (!lat || !lon) {
-          return 'Weather data unavailable';
-        }
-        // 2. Fetch current weather from Open‑Meteo.
-        const weatherUrl = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current_weather=true`;
-        const weatherResp = await fetch(weatherUrl);
-        if (!weatherResp.ok) throw new Error('Weather fetch failed');
-        const weatherData = await weatherResp.json();
-        const cw = weatherData.current_weather;
-        if (!cw) return 'Weather data unavailable';
-        // Compose a simple description. Temperature is reported in °C, windspeed in km/h.
-        const temp = cw.temperature;
-        const wind = cw.windspeed;
-        return `Current weather: ${temp}°C, Wind ${wind} km/h`;
-      } catch (err) {
-        console.error('Error fetching weather:', err);
-        return 'Weather data unavailable';
-      }
     }
 
     if (next) {
@@ -1522,13 +1463,6 @@ function wireBudgetPage(me) {
       updateExpensesChart();
       updateTopCategories();
     });
-  }
-
-  // Notification rendering removed.  Notifications and reminders are handled on
-  // the dedicated reminders page.  A no‑op placeholder function is
-  // defined to avoid breaking existing references.
-  function renderNotifications() {
-    return;
   }
 
   if (!(vacNameEl || totalEl || addBtn || table)) return; // not this page
