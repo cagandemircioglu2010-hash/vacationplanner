@@ -729,26 +729,48 @@ async function writeRemindersToSupabase(email, reminders) {
  * @returns {Object} { matrix: number[][], categories: string[] }
  */
 function buildExpenseMatrix(expenses) {
-  // Determine unique categories and map them to column indices
-  const categoryMap = {};
-  let nextIndex = 0;
-  expenses.forEach(exp => {
-    if (!exp || !exp.category || (exp.category in categoryMap)) return;
-    categoryMap[exp.category] = nextIndex++;
-  });
-  const categories = Object.keys(categoryMap);
-  const numCats = categories.length;
-  // Create a 12xN matrix (months 0–11) initialised to 0
-  const matrix = Array.from({ length: 12 }, () => Array(numCats).fill(0));
-  expenses.forEach(exp => {
-    if (!exp || !exp.date || !exp.category || typeof exp.amount !== 'number') return;
-    const month = new Date(exp.date).getMonth();
-    const col = categoryMap[exp.category];
-    if (col >= 0) {
-      matrix[month][col] += exp.amount;
+  const safeExpenses = Array.isArray(expenses) ? expenses : [];
+  const categories = [];
+  const categoryIndex = new Map();
+  const matrix = Array.from({ length: 12 }, () => []);
+
+  const ensureCategory = (rawName) => {
+    const name = rawName && rawName.trim() ? rawName.trim() : 'Uncategorised';
+    if (!categoryIndex.has(name)) {
+      const idx = categories.length;
+      categoryIndex.set(name, idx);
+      categories.push(name);
+      matrix.forEach((row) => {
+        row[idx] = 0;
+      });
     }
+    return categoryIndex.get(name);
+  };
+
+  safeExpenses.forEach((exp) => {
+    if (!exp) return;
+
+    const amount = typeof exp.amount === 'number' ? exp.amount : Number(exp.amount);
+    if (!Number.isFinite(amount)) return;
+
+    const dateValue = exp.date;
+    if (!dateValue) return;
+    const date = new Date(dateValue);
+    const time = date.getTime();
+    if (!Number.isFinite(time)) return;
+
+    const month = date.getMonth();
+    if (!Number.isInteger(month) || month < 0 || month > 11) return;
+
+    const col = ensureCategory(exp.category);
+    matrix[month][col] += amount;
   });
-  return { matrix, categories };
+
+  const normalisedMatrix = matrix.map((row) =>
+    categories.map((_, idx) => (Number.isFinite(row[idx]) ? row[idx] : 0))
+  );
+
+  return { matrix: normalisedMatrix, categories };
 }
 
 const nowISO = () => new Date().toISOString();
