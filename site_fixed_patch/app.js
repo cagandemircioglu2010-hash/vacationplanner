@@ -1188,17 +1188,6 @@ function renderHomepage(me) {
   // break once innerHTML is replaced), we'll bind handlers via event
   // delegation below.
 
-  // Make header nav work (Calendar/Vacations/Budget/Reminders)
-  const navCalendar  = qs("#calendar-nav");
-  const navVacations = qs("#vacations-nav");
-  const navBudget    = qs("#budget-nav");
-  const navReminders = qs("#reminders-nav");
-  on(navCalendar, "click", (e) => { e.preventDefault(); window.location.href = "calender.html"; });
-  on(navVacations, "click", (e) => { e.preventDefault(); window.scrollTo({ top: 0, behavior: "smooth" }); });
-  on(navBudget, "click",    (e) => { e.preventDefault(); window.location.href = "budget.html"; });
-  // Navigate to the dedicated reminders page instead of an anchor on the budget page
-  on(navReminders, "click", (e) => { e.preventDefault(); window.location.href = "reminders.html"; });
-
   const trips = getTrips(me.email);
   const next = nextUpcomingTrip(trips);
 
@@ -3035,45 +3024,40 @@ function wirePackingPage(me) {
 
 // ---------- Global nav bindings (present on several pages) ----------
 function wireHeaderNav() {
-    // Bind navigation links by reading their hrefs rather than hard‐coding
-    // target paths. Many templates reuse the same ID names (e.g. calendar-nav
-    // for both the Home and Trips links), which previously caused us to
-    // redirect the “Home” link to the Trips page. To make the nav resilient
-    // across pages we look up the element’s existing href and navigate there.
-    const cal = qs("#calendar-nav");
-    const vac = qs("#vacations-nav");
-    const bud = qs("#budget-nav");
-    const rem = qs("#reminders-nav");
-  const pack = qs("#packing-nav");
+  // Navigation links appear on multiple templates with the same IDs but
+  // occasionally different destinations (e.g. "Home" vs. "Calendar").  Instead
+  // of hard‑coding every path, derive the destination from the existing href and
+  // fall back to a sensible default when the attribute is missing.  Handling the
+  // bindings through a shared configuration keeps the logic centralised and
+  // avoids subtle bugs where one page overrides another's navigation target.
+  const navConfig = [
+    { selector: '#calendar-nav',  fallback: 'calender.html' },
+    { selector: '#vacations-nav', fallback: 'homepage.html' },
+    { selector: '#budget-nav',    fallback: 'budget.html' },
+    { selector: '#reminders-nav', fallback: 'reminders.html' },
+    { selector: '#packing-nav',   fallback: 'packing.html' }
+  ];
 
-    if (cal) {
-      // Default to the trips page (calendar), using lowercase filename
-      const dest = cal.getAttribute("href") || "calender.html";
-      on(cal, "click", (e) => { e.preventDefault(); window.location.href = dest; });
-    }
-    if (vac) {
-      // Default to home page, lowercase
-      const dest = vac.getAttribute("href") || "homepage.html";
-      on(vac, "click", (e) => { e.preventDefault(); window.location.href = dest; });
-    }
-    if (bud) {
-      // Default to budget page, lowercase
-      const dest = bud.getAttribute("href") || "budget.html";
-      on(bud, "click", (e) => { e.preventDefault(); window.location.href = dest; });
-    }
-    if (rem) {
-      // Default to the dedicated reminders page rather than an anchor on the budget page
-      const dest = rem.getAttribute("href") || "reminders.html";
-      on(rem, "click", (e) => { e.preventDefault(); window.location.href = dest; });
-    }
-
-    // Navigate to the packing list page if present in the header.  This binding
-    // ensures the link works consistently across all templates without
-    // duplicating logic.  Use lowercase filenames to avoid case‑sensitive issues.
-    if (pack) {
-      const dest = pack.getAttribute("href") || "packing.html";
-      on(pack, "click", (e) => { e.preventDefault(); window.location.href = dest; });
-    }
+  navConfig.forEach(({ selector, fallback }) => {
+    const link = qs(selector);
+    if (!link) return;
+    const dest = link.getAttribute('href') || fallback;
+    on(link, 'click', (ev) => {
+      ev.preventDefault();
+      if (!dest) return;
+      if (dest.startsWith('#')) {
+        // Allow templates to opt into smooth scrolling by pointing the href at
+        // an element ID.  This keeps behaviour declarative while preserving the
+        // default page navigation fallback.
+        const target = qs(dest);
+        if (target) {
+          target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
+        return;
+      }
+      window.location.href = dest;
+    });
+  });
 }
 
 // ---------- Simple "test.html" exercise compat ----------
