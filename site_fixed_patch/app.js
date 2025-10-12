@@ -1589,6 +1589,8 @@ function wireBudgetPage(me) {
   // choose an existing trip.
   const vacNameEl = qs("#vacation-select");
   const totalEl   = qs("#total-budget");
+  const totalBudgetPlaceholder = totalEl ? totalEl.getAttribute('placeholder') : '';
+  const disabledBudgetPlaceholder = 'Create a trip to set a budget';
   const addBtn    = qs("#add-expense-button");
   const table     = qs("#expenses-table");
   const tbody     = table ? qs("tbody", table) : null;
@@ -1622,6 +1624,35 @@ function wireBudgetPage(me) {
 
   const allTrips = getTrips(me.email) || [];
   let activeTrip = getActiveTripForBudget(me);
+
+  const updateBudgetInputState = () => {
+    if (!totalEl) return;
+    const hasTrip = Boolean(activeTrip?.id);
+    const isEditing = typeof document !== 'undefined' && document.activeElement === totalEl;
+
+    totalEl.disabled = !hasTrip;
+    totalEl.readOnly = !hasTrip;
+    totalEl.classList.toggle('opacity-50', !hasTrip);
+    totalEl.classList.toggle('cursor-not-allowed', !hasTrip);
+
+    if (!hasTrip) {
+      if (!isEditing) {
+        totalEl.value = '';
+      }
+      totalEl.setAttribute(
+        'placeholder',
+        disabledBudgetPlaceholder || totalBudgetPlaceholder || totalEl.getAttribute('placeholder') || ''
+      );
+      return;
+    }
+
+    const cost = activeTrip.cost;
+    if (!isEditing) {
+      const hasCost = cost !== undefined && cost !== null && cost !== '';
+      totalEl.value = hasCost ? String(cost) : '';
+    }
+    totalEl.setAttribute('placeholder', totalBudgetPlaceholder || '0');
+  };
 
   const ensureTripQueryMatches = (tripId) => {
     const url = new URL(window.location.href);
@@ -1667,6 +1698,7 @@ function wireBudgetPage(me) {
     // across different functions.  When there is no trip, this will be
     // undefined.
     window.currentActiveTrip = activeTrip || null;
+    updateBudgetInputState();
 
     // Maintain a stack of deleted expenses for the current trip.  Each time the user
     // deletes an expense row, the removed record is pushed onto this stack.  An
@@ -1881,20 +1913,13 @@ function wireBudgetPage(me) {
     // consistent.  For the total budget we populate the numeric cost
     // stored on the trip, falling back to whatever is already in the field
     // when no cost has been set.
-    // Populate the vacation name and total budget fields from the active trip.
-    // The name and budget fields are read‑only once a trip is selected to
-    // prevent accidental editing.  To change them, edit the trip from the
-    // Trips page.
+    // Populate the vacation name field from the active trip so the dropdown
+    // reflects the current selection.  Budget values remain editable on this
+    // screen, so users can adjust them without navigating away.
     if (vacNameEl) {
       // Select the active trip in the dropdown so the correct row appears selected
       vacNameEl.value = activeTrip.id;
       // Keep the select enabled to allow switching between trips
-    }
-    if (totalEl) {
-      if (activeTrip.cost != null && activeTrip.cost !== '') {
-        totalEl.value = String(activeTrip.cost);
-      }
-      totalEl.readOnly = true;
     }
 
     // Record this trip as recently viewed.  Each time a budget page is
@@ -2067,12 +2092,15 @@ function wireBudgetPage(me) {
   function renderTable() {
     if (!tbody) return;
 
+    updateBudgetInputState();
+
     // Without this guard, visiting the budget page before creating any
     // trips caused a "Cannot read properties of null" error whenever the
     // user interacted with the currency selector.  Reset the UI to an empty
     // state so the page remains usable until a trip exists.
     if (!activeTrip || !activeTrip.id) {
       tbody.innerHTML = "";
+      updateBudgetInputState();
       qsa('[data-summary="remaining"]').forEach(el => {
         el.textContent = fmtMoney(0);
       });
@@ -2234,6 +2262,12 @@ function wireBudgetPage(me) {
     on(totalEl, "change", () => {
       // When the total budget changes, update the cost on the trip and
       // persist it.  Use parseCurrency to handle formatted input.
+      if (!activeTrip?.id) {
+        totalEl.value = '';
+        updateBudgetInputState();
+        return;
+      }
+
       const newBudget = parseCurrency(totalEl.value);
       const tripsAll = getTrips(me.email);
       const idx = tripsAll.findIndex(t => t.id === activeTrip.id);
@@ -2243,6 +2277,7 @@ function wireBudgetPage(me) {
         // also update the in-memory activeTrip reference
         activeTrip.cost = newBudget;
       }
+      updateBudgetInputState();
       renderTable();
     });
 
