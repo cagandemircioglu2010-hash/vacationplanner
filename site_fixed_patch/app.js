@@ -72,6 +72,29 @@ const remindersKey = (email) => `wl_rem_${email}`;      // [{...reminder}]
 const selectedTripKey = (email) => `wl_selected_trip_${email}`; // last chosen trip id
 const packingKey = (tripId) => `wl_pack_${tripId}`;     // [{...packing item}]
 
+const MS_PER_DAY = 1000 * 60 * 60 * 24;
+const TRIP_FIELD_SNAKE_TO_CAMEL = {
+  start_date: 'startDate',
+  end_date: 'endDate',
+  created_at: 'createdAt',
+  updated_at: 'updatedAt'
+};
+const TRIP_FIELD_CAMEL_TO_SNAKE = Object.entries(TRIP_FIELD_SNAKE_TO_CAMEL)
+  .reduce((acc, [snake, camel]) => {
+    acc[camel] = snake;
+    return acc;
+  }, {});
+
+function calculateTripDuration(start, end) {
+  if (!start || !end) return null;
+  const startTime = new Date(start).getTime();
+  const endTime = new Date(end).getTime();
+  if (!Number.isFinite(startTime) || !Number.isFinite(endTime)) {
+    return null;
+  }
+  return Math.max(1, Math.round((endTime - startTime) / MS_PER_DAY) + 1);
+}
+
 // Keep a record of recently viewed trip IDs for each user.  This queue stores
 // up to the last five trips visited on the budget page.  It is used on the
 // homepage to provide quick access to recently viewed vacations.  The queue
@@ -326,25 +349,51 @@ async function readPackingFromSupabase(email, tripId) {
 function normalizeTripFromSupabase(trip) {
   if (!trip || typeof trip !== 'object') return null;
   const normalized = { ...trip };
-  if (normalized.start_date && !normalized.startDate) normalized.startDate = normalized.start_date;
-  if (normalized.end_date && !normalized.endDate) normalized.endDate = normalized.end_date;
-  if (normalized.created_at && !normalized.createdAt) normalized.createdAt = normalized.created_at;
-  if (normalized.updated_at && !normalized.updatedAt) normalized.updatedAt = normalized.updated_at;
-  delete normalized.start_date;
-  delete normalized.end_date;
-  delete normalized.created_at;
-  delete normalized.updated_at;
+  Object.entries(TRIP_FIELD_SNAKE_TO_CAMEL).forEach(([snake, camel]) => {
+    if (normalized[snake] !== undefined && normalized[snake] !== null && !normalized[camel]) {
+      normalized[camel] = normalized[snake];
+    }
+    delete normalized[snake];
+  });
 
   if (!normalized.days && normalized.startDate && normalized.endDate) {
-    const startTime = new Date(normalized.startDate).getTime();
-    const endTime = new Date(normalized.endDate).getTime();
-    if (Number.isFinite(startTime) && Number.isFinite(endTime)) {
-      const msPerDay = 1000 * 60 * 60 * 24;
-      const span = Math.round((endTime - startTime) / msPerDay) + 1;
-      normalized.days = Math.max(1, span);
+    const span = calculateTripDuration(normalized.startDate, normalized.endDate);
+    if (span) {
+      normalized.days = span;
     }
   }
   return normalized;
+}
+
+function serializeTripForSupabase(trip, email) {
+  if (!trip || typeof trip !== 'object' || !trip.id || !email) {
+    return null;
+  }
+
+  const payload = { email, id: trip.id };
+  const scalarKeys = ['name', 'location', 'notes', 'cost', 'days'];
+  scalarKeys.forEach((key) => {
+    if (trip[key] !== undefined) {
+      payload[key] = trip[key];
+    }
+  });
+
+  Object.entries(TRIP_FIELD_CAMEL_TO_SNAKE).forEach(([camel, snake]) => {
+    if (trip[camel] !== undefined) {
+      payload[snake] = trip[camel];
+    } else if (trip[snake] !== undefined) {
+      payload[snake] = trip[snake];
+    }
+  });
+
+  if (payload.days == null && trip.startDate && trip.endDate) {
+    const span = calculateTripDuration(trip.startDate, trip.endDate);
+    if (span) {
+      payload.days = span;
+    }
+  }
+
+  return payload;
 }
 
 function tripTimestamp(trip) {
@@ -500,10 +549,11 @@ async function writeTripsToSupabase(email, trips) {
   const supabase = window.supabaseClient;
   if (!supabase || !email || !Array.isArray(trips)) return;
 
-  const payload = trips
-    .filter(trip => trip && trip.id)
-    .map(trip => ({ ...trip, email }));
-  const keepIds = new Set(payload.map(trip => trip.id));
+  const validTrips = trips.filter(trip => trip && trip.id);
+  const keepIds = new Set(validTrips.map(trip => trip.id));
+  const payload = validTrips
+    .map(trip => serializeTripForSupabase(trip, email))
+    .filter(Boolean);
 
   try {
     const { data: remoteRows, error: fetchError } = await supabase
@@ -1169,18 +1219,39 @@ function wireAddVacationPage(me) {
 
     const trips = getTrips(me.email);
     const editId = form.dataset.editId;
+    const timestamp = nowISO();
+    const computedDays = calculateTripDuration(start, end);
     let selectionId = null;
     if (editId) {
       const idx = trips.findIndex(t => t.id === editId);
       if (idx >= 0) {
-        trips[idx] = { ...trips[idx], name, location: loc, startDate: start, endDate: end, cost, notes, updatedAt: nowISO() };
+        trips[idx] = {
+          ...trips[idx],
+          name,
+          location: loc,
+          startDate: start,
+          endDate: end,
+          cost,
+          notes,
+          days: computedDays ?? trips[idx].days,
+          updatedAt: timestamp
+        };
       }
       selectionId = editId;
     } else {
       const id = uid("trip");
-      const msPerDay = 1000 * 60 * 60 * 24;
-      const days = Math.max(1, Math.round((new Date(end) - new Date(start)) / msPerDay) + 1);
-      trips.push({ id, name, location: loc, startDate: start, endDate: end, cost, notes, days, createdAt: nowISO(), updatedAt: nowISO() });
+      trips.push({
+        id,
+        name,
+        location: loc,
+        startDate: start,
+        endDate: end,
+        cost,
+        notes,
+        days: computedDays ?? 1,
+        createdAt: timestamp,
+        updatedAt: timestamp
+      });
       selectionId = id;
     }
     saveTrips(me.email, trips);
