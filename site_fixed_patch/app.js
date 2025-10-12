@@ -735,7 +735,18 @@ function buildExpenseMatrix(expenses) {
   const matrix = Array.from({ length: 12 }, () => []);
 
   const ensureCategory = (rawName) => {
-    const name = rawName && rawName.trim() ? rawName.trim() : 'Uncategorised';
+    let name = '';
+
+    if (typeof rawName === 'string') {
+      name = rawName.trim();
+    } else if (rawName != null) {
+      const coerced = String(rawName);
+      name = typeof coerced === 'string' ? coerced.trim() : '';
+    }
+
+    if (!name) {
+      name = 'Uncategorised';
+    }
     if (!categoryIndex.has(name)) {
       const idx = categories.length;
       categoryIndex.set(name, idx);
