@@ -347,6 +347,36 @@ function normalizeTripFromSupabase(trip) {
   return normalized;
 }
 
+function serializeTripForSupabase(trip, email) {
+  if (!trip || typeof trip !== 'object' || !trip.id || !email) {
+    return null;
+  }
+
+  const payload = { ...trip, email };
+  const mappings = [
+    ['startDate', 'start_date'],
+    ['endDate', 'end_date'],
+    ['createdAt', 'created_at'],
+    ['updatedAt', 'updated_at']
+  ];
+
+  mappings.forEach(([camel, snake]) => {
+    if (camel in payload) {
+      if (payload[camel] != null && payload[snake] == null) {
+        payload[snake] = payload[camel];
+      }
+      delete payload[camel];
+    }
+  });
+
+  if ('cost' in payload) {
+    const costNum = Number(payload.cost);
+    payload.cost = Number.isFinite(costNum) ? costNum : null;
+  }
+
+  return payload;
+}
+
 function tripTimestamp(trip) {
   if (!trip) return 0;
   const candidates = [trip.updatedAt, trip.createdAt, trip.updated_at, trip.created_at];
@@ -501,8 +531,8 @@ async function writeTripsToSupabase(email, trips) {
   if (!supabase || !email || !Array.isArray(trips)) return;
 
   const payload = trips
-    .filter(trip => trip && trip.id)
-    .map(trip => ({ ...trip, email }));
+    .map(trip => serializeTripForSupabase(trip, email))
+    .filter(Boolean);
   const keepIds = new Set(payload.map(trip => trip.id));
 
   try {
