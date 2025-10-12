@@ -108,6 +108,12 @@ function addRecentTrip(email, tripId) {
   setRecentTrips(email, queue);
 }
 
+function removeRecentTrip(email, tripId) {
+  if (!email || !tripId) return;
+  const queue = getRecentTrips(email).filter(id => id !== tripId);
+  setRecentTrips(email, queue);
+}
+
 // Retrieve an array of reminders for a user from localStorage.  Supabase
 // is the source of truth for reminders; local storage acts as a cache
 // after syncFromSupabase() runs.  Returns an empty array when no
@@ -450,35 +456,65 @@ async function syncFromSupabase(me) {
  * @param {string} email The email of the user owning the trips
  * @param {Array<Object>} trips The array of trip objects
  */
-function writeTripsToSupabase(email, trips) {
+async function writeTripsToSupabase(email, trips) {
   /**
    * Persist an array of trips to Supabase.
    *
    * Each trip object is upserted into the `trips` table along with
-   * the owning user's email.  Upsert is used so that existing rows
-   * with the same primary key (trip id) are updated rather than
-   * duplicated.  This function runs asynchronously without awaiting
-   * individual writes, preserving the non-blocking behaviour of the
-   * original Firestore implementation.
+   * the owning user's email.  Before inserting, any remote rows that
+   * are no longer present locally are removed to keep deletions in
+   * sync.  Operations are batched to reduce network chatter compared
+   * to issuing one request per trip.
    *
    * @param {string} email The email of the user owning the trips
    * @param {Array<Object>} trips The array of trip objects to persist
    */
   const supabase = window.supabaseClient;
   if (!supabase || !email || !Array.isArray(trips)) return;
-  (async () => {
-    for (const trip of trips) {
-      try {
-        const record = { ...trip, email };
-        const { error } = await supabase.from('trips').upsert(record);
-        if (error) {
-          console.error('Error writing trip to Supabase:', error);
+
+  const payload = trips
+    .filter(trip => trip && trip.id)
+    .map(trip => ({ ...trip, email }));
+  const keepIds = new Set(payload.map(trip => trip.id));
+
+  try {
+    const { data: remoteRows, error: fetchError } = await supabase
+      .from('trips')
+      .select('id')
+      .eq('email', email);
+    if (fetchError) {
+      console.error('Error fetching trips from Supabase:', fetchError);
+    } else if (Array.isArray(remoteRows) && remoteRows.length) {
+      const staleIds = remoteRows
+        .map(row => row?.id)
+        .filter(id => id && !keepIds.has(id));
+      if (staleIds.length) {
+        const { error: deleteError } = await supabase
+          .from('trips')
+          .delete()
+          .eq('email', email)
+          .in('id', staleIds);
+        if (deleteError) {
+          console.error('Error deleting removed trips from Supabase:', deleteError);
         }
-      } catch (err) {
-        console.error('Error writing trip to Supabase:', err);
       }
     }
-  })();
+  } catch (err) {
+    console.error('Error pruning trips in Supabase:', err);
+  }
+
+  if (!payload.length) {
+    return;
+  }
+
+  try {
+    const { error } = await supabase.from('trips').upsert(payload);
+    if (error) {
+      console.error('Error writing trip to Supabase:', error);
+    }
+  } catch (err) {
+    console.error('Error writing trip to Supabase:', err);
+  }
 }
 
 /**
@@ -522,7 +558,7 @@ async function writeExpensesToSupabase(email, tripId, expenses) {
   }
 }
 
-function writePackingToSupabase(email, tripId, items) {
+async function writePackingToSupabase(email, tripId, items) {
   /**
    * Persist packing list items for a specific trip to Supabase.
    *
@@ -537,24 +573,32 @@ function writePackingToSupabase(email, tripId, items) {
    */
   const supabase = window.supabaseClient;
   if (!supabase || !email || !tripId || !Array.isArray(items)) return;
-  (async () => {
-    try {
-      await supabase.from('packing').delete().match({ email, trip_id: tripId });
-    } catch (err) {
-      console.error('Error deleting old packing items from Supabase:', err);
+
+  try {
+    const { error: deleteError } = await supabase
+      .from('packing')
+      .delete()
+      .match({ email, trip_id: tripId });
+    if (deleteError) {
+      console.error('Error deleting old packing items from Supabase:', deleteError);
     }
-    for (const item of items) {
-      try {
-        const record = { ...item, email, trip_id: tripId };
-        const { error } = await supabase.from('packing').upsert(record);
-        if (error) {
-          console.error('Error writing packing item to Supabase:', error);
-        }
-      } catch (err) {
-        console.error('Error writing packing item to Supabase:', err);
-      }
+  } catch (err) {
+    console.error('Error deleting old packing items from Supabase:', err);
+  }
+
+  if (!items.length) {
+    return;
+  }
+
+  const payload = items.map(item => ({ ...item, email, trip_id: tripId }));
+  try {
+    const { error } = await supabase.from('packing').upsert(payload);
+    if (error) {
+      console.error('Error writing packing item to Supabase:', error);
     }
-  })();
+  } catch (err) {
+    console.error('Error writing packing item to Supabase:', err);
+  }
 }
 
 /**
@@ -565,7 +609,7 @@ function writePackingToSupabase(email, tripId, items) {
  * @param {string} email The user email
  * @param {Array<Object>} reminders Array of reminder objects
  */
-function writeRemindersToSupabase(email, reminders) {
+async function writeRemindersToSupabase(email, reminders) {
   /**
    * Persist an array of reminders to Supabase.
    *
@@ -578,27 +622,32 @@ function writeRemindersToSupabase(email, reminders) {
    */
   const supabase = window.supabaseClient;
   if (!supabase || !email || !Array.isArray(reminders)) return;
-  (async () => {
-    try {
-      await supabase.from('reminders').delete().match({ email });
-    } catch (err) {
-      console.error('Error deleting old reminders from Supabase:', err);
-    }
 
-    if (!reminders.length) {
-      return;
+  try {
+    const { error: deleteError } = await supabase
+      .from('reminders')
+      .delete()
+      .match({ email });
+    if (deleteError) {
+      console.error('Error deleting old reminders from Supabase:', deleteError);
     }
+  } catch (err) {
+    console.error('Error deleting old reminders from Supabase:', err);
+  }
 
-    const payload = reminders.map(rem => ({ ...rem, email }));
-    try {
-      const { error } = await supabase.from('reminders').upsert(payload);
-      if (error) {
-        console.error('Error writing reminders to Supabase:', error);
-      }
-    } catch (err) {
-      console.error('Error writing reminders to Supabase:', err);
+  if (!reminders.length) {
+    return;
+  }
+
+  const payload = reminders.map(rem => ({ ...rem, email }));
+  try {
+    const { error } = await supabase.from('reminders').upsert(payload);
+    if (error) {
+      console.error('Error writing reminders to Supabase:', error);
     }
-  })();
+  } catch (err) {
+    console.error('Error writing reminders to Supabase:', err);
+  }
 }
 
 /**
@@ -879,6 +928,56 @@ function saveTrips(email, trips) {
   // asynchronous call runs in the background and does not block
   // the UI.  Errors, if any, are logged by writeTripsToSupabase.
   writeTripsToSupabase(email, trips);
+}
+
+async function deleteTripCascade(email, tripId) {
+  if (!email || !tripId) {
+    return getTrips(email) || [];
+  }
+
+  const remainingTrips = (getTrips(email) || []).filter((trip) => trip?.id !== tripId);
+  saveTrips(email, remainingTrips);
+
+  // Clear cached datasets associated with the trip
+  store.remove(expensesKey(tripId));
+  markExpensesDirty(tripId, false);
+  store.remove(packingKey(tripId));
+  removeRecentTrip(email, tripId);
+
+  const remainingReminders = (getReminders(email) || []).filter((rem) => rem?.tripId !== tripId);
+  store.set(remindersKey(email), remainingReminders);
+
+  const nextSelection = (() => {
+    const stored = getStoredTripSelection(email);
+    if (stored !== tripId) {
+      return stored;
+    }
+    const upcoming = nextUpcomingTrip(remainingTrips);
+    if (upcoming?.id) {
+      return upcoming.id;
+    }
+    return remainingTrips[0]?.id || '';
+  })();
+  setStoredTripSelection(email, nextSelection || null);
+
+  // Remove remote data; ignore errors so the UI stays responsive.
+  try {
+    await writeExpensesToSupabase(email, tripId, []);
+  } catch (err) {
+    console.error('Error removing expenses for deleted trip:', err);
+  }
+  try {
+    await writePackingToSupabase(email, tripId, []);
+  } catch (err) {
+    console.error('Error removing packing items for deleted trip:', err);
+  }
+  try {
+    await writeRemindersToSupabase(email, remainingReminders);
+  } catch (err) {
+    console.error('Error syncing reminders after trip deletion:', err);
+  }
+
+  return remainingTrips;
 }
 
 function wireNewTripButton(defaultRedirect = 'homepage.html') {
@@ -1342,32 +1441,35 @@ function renderHomepage(me) {
   // ``#trip-details`` (or its child buttons) and handle accordingly. This
   // ensures that even if the buttons are recreated during rendering,
   // the handlers remain attached.
-  on(tripBox, "click", (e) => {
-    const target = e.target.closest("button");
-    if (!target) return;
-    if (target.id === "edit-trip-button") {
-      e.preventDefault();
-      const id = tripBox?.dataset?.currentTripId;
-      if (!id) {
+  if (tripBox && !tripBox._wlTripActionHandler) {
+    const handler = async (e) => {
+      const target = e.target.closest('button');
+      if (!target) return;
+      const currentId = tripBox?.dataset?.currentTripId;
+      if (!currentId) return;
+
+      if (target.id === 'edit-trip-button') {
+        e.preventDefault();
+        window.location.href = `addvac.html?edit=${encodeURIComponent(currentId)}&redirect=homepage.html`;
         return;
       }
-        window.location.href = `addvac.html?edit=${encodeURIComponent(id)}&redirect=homepage.html`;
-    } else if (target.id === "delete-trip-button") {
-      e.preventDefault();
-      const id = tripBox?.dataset?.currentTripId;
-      if (!id) {
-        return;
+
+      if (target.id === 'delete-trip-button') {
+        e.preventDefault();
+        try {
+          await deleteTripCascade(me.email, currentId);
+        } catch (err) {
+          console.error('Failed to delete trip:', err);
+          tripBox.innerHTML = "<p class='text-red-500'>Unable to delete trip. Please try again.</p>";
+          return;
+        }
+        renderHomepage(me);
+        maybeWireCalendar(me);
       }
-      // Immediately delete the selected trip without a confirmation popup.  A
-      // confirmation UI could be implemented inline if desired.
-      const trips = getTrips(me.email).filter(t => t.id !== id);
-      saveTrips(me.email, trips);
-      // Also clear expenses for that trip
-      store.remove(expensesKey(id));
-      // Reset the trip box content
-      tripBox.innerHTML = "<p class='opacity-70'>Trip deleted.</p>";
-    }
-  });
+    };
+    tripBox.addEventListener('click', handler);
+    tripBox._wlTripActionHandler = handler;
+  }
 }
 
 // ---------- Budget & Expenses ----------
@@ -2538,25 +2640,17 @@ function maybeWireCalendar(me) {
       const delBtn = document.createElement('button');
       delBtn.className = 'text-red-500 text-sm hover:underline';
       delBtn.textContent = 'Delete';
-      delBtn.addEventListener('click', (ev) => {
+      delBtn.addEventListener('click', async (ev) => {
         ev.preventDefault();
         const confirmed = confirm('Delete this trip? This action cannot be undone.');
         if (!confirmed) return;
-        const updated = trips.filter(t => t.id !== trip.id);
-        saveTrips(me.email, updated);
-        // Remove associated expenses and reminders
-        const expKey = expensesKey(trip.id);
-        store.remove(expKey);
-        markExpensesDirty(trip.id, false);
-        const syncPromise = writeExpensesToSupabase(me.email, trip.id, []);
-        if (syncPromise && typeof syncPromise.catch === 'function') {
-          syncPromise.catch(() => {});
+        try {
+          const updated = await deleteTripCascade(me.email, trip.id);
+          trips = Array.isArray(updated) ? updated : (getTrips(me.email) || []);
+        } catch (err) {
+          console.error('Failed to delete trip:', err);
+          return;
         }
-        const remsAll = store.get(remindersKey(me.email), []) || [];
-        const filteredRems = remsAll.filter(r => r.tripId !== trip.id);
-        store.set(remindersKey(me.email), filteredRems);
-        writeRemindersToSupabase(me.email, filteredRems);
-        trips = updated;
         renderCards(query);
         maybeWireCalendar(me);
       });
@@ -3123,7 +3217,7 @@ document.addEventListener("DOMContentLoaded", async () => {
       }
     }
     // Refresh budget page bindings if fields are present
-    if (qs('#vacation-name')) {
+    if (qs('#vacation-select')) {
       if (sess) {
         wireBudgetPage(sess);
       }
