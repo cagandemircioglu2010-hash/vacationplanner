@@ -358,6 +358,31 @@ function tripTimestamp(trip) {
   return 0;
 }
 
+function normalizeReminderFromSupabase(reminder) {
+  if (!reminder || typeof reminder !== 'object') return null;
+  const normalized = { ...reminder };
+  if (normalized.trip_id && !normalized.tripId) normalized.tripId = normalized.trip_id;
+  if (normalized.created_at && !normalized.createdAt) normalized.createdAt = normalized.created_at;
+  if (normalized.updated_at && !normalized.updatedAt) normalized.updatedAt = normalized.updated_at;
+  delete normalized.trip_id;
+  delete normalized.created_at;
+  delete normalized.updated_at;
+  return normalized;
+}
+
+function serializeReminderForSupabase(reminder, email) {
+  if (!reminder || typeof reminder !== 'object' || !email) return null;
+  const payload = { ...reminder, email };
+  if (payload.tripId && !payload.trip_id) payload.trip_id = payload.tripId;
+  if (payload.createdAt && !payload.created_at) payload.created_at = payload.createdAt;
+  if (payload.updatedAt && !payload.updated_at) payload.updated_at = payload.updatedAt;
+  delete payload.tripId;
+  delete payload.createdAt;
+  delete payload.updatedAt;
+  if (!payload.trip_id) return null;
+  return payload;
+}
+
 function mergeTripCollections(localTrips = [], remoteTrips = []) {
   const merged = new Map();
   remoteTrips.forEach((trip) => {
@@ -431,7 +456,10 @@ async function syncFromSupabase(me) {
   // local cache as well.
   const rems = await readRemindersFromSupabase(me.email);
   if (rems !== null) {
-    store.set(remindersKey(me.email), Array.isArray(rems) ? rems : []);
+    const normalizedRems = Array.isArray(rems)
+      ? rems.map(normalizeReminderFromSupabase).filter(Boolean)
+      : [];
+    store.set(remindersKey(me.email), normalizedRems);
   }
 
   // Pull packing lists for each trip.  Packing items are stored in the
@@ -639,7 +667,12 @@ async function writeRemindersToSupabase(email, reminders) {
     return;
   }
 
-  const payload = reminders.map(rem => ({ ...rem, email }));
+  const payload = reminders
+    .map(rem => serializeReminderForSupabase(rem, email))
+    .filter(Boolean);
+  if (!payload.length) {
+    return;
+  }
   try {
     const { error } = await supabase.from('reminders').upsert(payload);
     if (error) {
