@@ -1281,77 +1281,137 @@ function wireAddVacationPage(me) {
     window.location.href = redirect;
   });
 
-    // Handle the cancel button: navigate back to the previous page or the redirect target.
-    const cancelBtn = qs('#cancel-trip-button');
-    on(cancelBtn, 'click', (e) => {
-      e.preventDefault();
-      // Try to honour the ?redirect query parameter; default to homepage.
-      const params = new URLSearchParams(window.location.search);
-      const redirect = params.get('redirect') || 'homepage.html';
-      // If there's a history entry from which the user came, going back
-      // provides a natural flow. Otherwise, fall back to redirect.
-      if (window.history.length > 1) {
-        window.history.back();
-      } else {
-        window.location.href = redirect;
-      }
-    });
+  // Handle the cancel button: navigate back to the previous page or the redirect target.
+  const cancelBtn = qs('#cancel-trip-button');
+  on(cancelBtn, 'click', (e) => {
+    e.preventDefault();
+    // Try to honour the ?redirect query parameter; default to homepage.
+    const params = new URLSearchParams(window.location.search);
+    const redirect = params.get('redirect') || 'homepage.html';
+    // If there's a history entry from which the user came, going back
+    // provides a natural flow. Otherwise, fall back to redirect.
+    if (window.history.length > 1) {
+      window.history.back();
+    } else {
+      window.location.href = redirect;
+    }
+  });
 }
 
-function renderHomepage(me) {
-  wireNewTripButton('homepage.html');
-  const tripBox  = qs("#trip-details");
-  // The edit and delete buttons may be dynamically recreated when rendering
-  // trip details. Instead of capturing static references here (which will
-  // break once innerHTML is replaced), we'll bind handlers via event
-  // delegation below.
+function setSingletonListener(element, eventName, handler, markerName) {
+  if (!element) return;
+  const key = markerName || `_wlHandler_${eventName}`;
+  const existing = element[key];
+  if (existing) {
+    element.removeEventListener(eventName, existing);
+    element[key] = null;
+  }
+  if (typeof handler === 'function') {
+    element.addEventListener(eventName, handler);
+    element[key] = handler;
+  }
+}
 
-  const trips = getTrips(me.email);
-  const next = nextUpcomingTrip(trips);
+function createPlaceholderMessage(text, className = 'text-sm opacity-70') {
+  const msg = document.createElement('p');
+  msg.className = className;
+  msg.textContent = text;
+  return msg;
+}
 
-  /**
-   * Render the currently selected trip inside the trip details panel. The
-   * original templates place the Edit and Delete buttons inside
-   * ``#trip-details``. The previous implementation replaced the entire
-   * contents of the panel using ``innerHTML``, which removed those
-   * buttons and left the page without any way to edit or delete a
-   * vacation. To fix this, we explicitly reinsert the action buttons
-   * whenever we render the details and attach click handlers via
-   * event delegation.
-   *
-   * @param {Object|null} trip The trip data to render
-   */
-    /**
-     * Render a single trip's details into the details panel. In addition to
-     * the standard information (name, date range, location and cost), this
-     * function now asynchronously fetches current weather information for
-     * the trip's destination using free, public APIs. The weather data is
-     * inserted into the details view once retrieved. This demonstrates
-     * integration with external REST endpoints and the use of asynchronous
-     * control flow (promises/async‑await).
-     *
-     * @param {Object|null} trip The trip data to render
-     */
-    function setTripDetail(trip) {
-      if (!trip || !tripBox) return;
-      const rangeTxt = `${trip.startDate} - ${trip.endDate}`;
-      // Compose the inner markup for details.
-      let html = ``;
-      html += `<p class="text-sm text-primary font-semibold">${rangeTxt}</p>`;
-      html += `<h4 class="text-2xl font-bold">${trip.name}</h4>`;
-      html += `<p class="mt-1 opacity-80">${trip.location}</p>`;
-      html += `<div class="mt-3 text-sm opacity-70">`;
-      if (trip.cost != null) {
-        html += `Estimated Cost: ${fmtMoney(trip.cost)}`;
-      }
-      html += `</div>`;
-      // Append trip ID.
-      html += `<div class="mt-4 text-xs opacity-60">Trip ID: ${trip.id}</div>`;
-      // Append action buttons. We include IDs on the buttons so that
-      // event delegation can catch clicks. Note: we intentionally do not
-      // duplicate classes from the templates exactly; instead we use
-      // functional classes similar to the originals to maintain styling.
-      html += `<div class="mt-6 flex gap-4" id="trip-actions">
+function createUpcomingTripCard(trip) {
+  const card = document.createElement('div');
+  card.className = 'home-trip-card flex items-center gap-4 p-4 rounded-lg bg-primary/10 dark:bg-primary/20 cursor-pointer hover:bg-primary/20 dark:hover:bg-primary/30 transition-colors';
+  card.dataset.tripId = trip.id;
+
+  const iconWrap = document.createElement('div');
+  iconWrap.className = 'flex items-center justify-center rounded-lg bg-primary/20 dark:bg-primary/30 p-3';
+  const icon = document.createElement('span');
+  icon.className = 'material-symbols-outlined text-primary';
+  icon.textContent = 'travel_explore';
+  iconWrap.appendChild(icon);
+  card.appendChild(iconWrap);
+
+  const textWrap = document.createElement('div');
+  const nameEl = document.createElement('p');
+  nameEl.className = 'font-semibold text-slate-800 dark:text-slate-200';
+  nameEl.textContent = trip.name;
+  const dateEl = document.createElement('p');
+  dateEl.className = 'text-sm text-slate-500 dark:text-slate-400';
+  dateEl.textContent = `${trip.startDate} - ${trip.endDate}`;
+  textWrap.appendChild(nameEl);
+  textWrap.appendChild(dateEl);
+  card.appendChild(textWrap);
+
+  return card;
+}
+
+function createSummaryCard(title, value, iconName) {
+  const card = document.createElement('div');
+  card.className = 'bg-white dark:bg-slate-900 p-4 rounded-lg shadow-sm flex items-center gap-4';
+
+  const iconWrap = document.createElement('div');
+  iconWrap.className = 'p-3 rounded-full bg-primary/10 dark:bg-primary/20';
+  const icon = document.createElement('span');
+  icon.className = 'material-symbols-outlined text-primary';
+  icon.textContent = iconName;
+  iconWrap.appendChild(icon);
+  card.appendChild(iconWrap);
+
+  const text = document.createElement('div');
+  const titleEl = document.createElement('p');
+  titleEl.className = 'text-sm text-slate-500 dark:text-slate-400';
+  titleEl.textContent = title;
+  const valueEl = document.createElement('p');
+  valueEl.className = 'text-xl font-bold text-slate-900 dark:text-white';
+  valueEl.textContent = value;
+  text.appendChild(titleEl);
+  text.appendChild(valueEl);
+  card.appendChild(text);
+
+  return card;
+}
+
+function createReminderCard(reminder) {
+  const card = document.createElement('div');
+  card.className = 'flex items-center gap-4 p-4 rounded-lg bg-primary/10 dark:bg-primary/20';
+
+  const iconWrap = document.createElement('div');
+  iconWrap.className = 'flex items-center justify-center rounded-lg bg-primary/20 dark:bg-primary/30 p-3';
+  const icon = document.createElement('span');
+  icon.className = 'material-symbols-outlined text-primary';
+  icon.textContent = 'event';
+  iconWrap.appendChild(icon);
+  card.appendChild(iconWrap);
+
+  const textWrap = document.createElement('div');
+  const nameEl = document.createElement('p');
+  nameEl.className = 'font-semibold text-slate-800 dark:text-slate-200';
+  nameEl.textContent = reminder.name;
+  const dateEl = document.createElement('p');
+  dateEl.className = 'text-sm text-slate-500 dark:text-slate-400';
+  dateEl.textContent = reminder.date;
+  textWrap.appendChild(nameEl);
+  textWrap.appendChild(dateEl);
+  card.appendChild(textWrap);
+
+  return card;
+}
+
+function renderTripDetail(tripBox, trip) {
+  if (!tripBox || !trip) return;
+  const rangeTxt = `${trip.startDate} - ${trip.endDate}`;
+  let html = '';
+  html += `<p class="text-sm text-primary font-semibold">${rangeTxt}</p>`;
+  html += `<h4 class="text-2xl font-bold">${trip.name}</h4>`;
+  html += `<p class="mt-1 opacity-80">${trip.location}</p>`;
+  html += `<div class="mt-3 text-sm opacity-70">`;
+  if (trip.cost != null) {
+    html += `Estimated Cost: ${fmtMoney(trip.cost)}`;
+  }
+  html += `</div>`;
+  html += `<div class="mt-4 text-xs opacity-60">Trip ID: ${trip.id}</div>`;
+  html += `<div class="mt-6 flex gap-4" id="trip-actions">
         <button id="edit-trip-button" class="bg-primary/20 dark:bg-primary/30 text-primary font-bold py-2 px-4 rounded-full text-sm hover:bg-primary/30 dark:hover:bg-primary/40 transition-colors flex items-center gap-2">
           <span class="material-symbols-outlined text-base">edit</span>
           Edit
@@ -1361,195 +1421,123 @@ function renderHomepage(me) {
           Delete
         </button>
       </div>`;
-      tripBox.innerHTML = html;
-      // Store current trip ID on dataset for later retrieval
-      tripBox.dataset.currentTripId = trip.id;
-      // Weather fetching has been removed.  If needed in future, reintroduce
-      // asynchronous calls here to update additional details.
-    }
+  tripBox.innerHTML = html;
+  tripBox.dataset.currentTripId = trip.id;
+}
 
-    if (next) {
-      setTripDetail(next);
-    } else if (tripBox) {
-      // No trips yet; display a placeholder message.  Leave the edit/delete
-      // buttons hidden by clearing the tripBox and removing any stored id.
-      tripBox.innerHTML = '<p class="opacity-70">No trips yet. Click “New Trip” to add one!</p>';
-      delete tripBox.dataset.currentTripId;
-    }
+function renderTripDetailsSection(trips) {
+  const tripBox = qs('#trip-details');
+  if (!tripBox) return null;
+  const next = nextUpcomingTrip(trips);
+  if (next) {
+    renderTripDetail(tripBox, next);
+  } else {
+    tripBox.innerHTML = '<p class="opacity-70">No trips yet. Click “New Trip” to add one!</p>';
+    delete tripBox.dataset.currentTripId;
+  }
+  return tripBox;
+}
 
-    // Render upcoming trips on the home page if a dedicated container
-    // exists.  The template includes a <div id="home-upcoming"> for
-    // this purpose.  We'll populate it with cards for each trip in
-    // chronological order.  If there are no trips yet we leave it empty.
-    const upcomingContainer = qs('#home-upcoming');
-    if (upcomingContainer) {
-      upcomingContainer.innerHTML = '';
-      const sortedTrips = trips.slice().sort((a, b) => new Date(a.startDate) - new Date(b.startDate));
-      if (sortedTrips.length === 0) {
-        // If there are no upcoming trips, display a simple message instead of
-        // leaving the section empty. This prevents the heading from appearing
-        // without any content beneath it.
-        const msg = document.createElement('p');
-        msg.className = 'text-sm opacity-70';
-        msg.textContent = 'No upcoming trips.';
-        upcomingContainer.appendChild(msg);
-      } else {
-        sortedTrips.forEach(t => {
-          const card = document.createElement('div');
-          // Assign a class for styling and event delegation and embed the trip id for later retrieval
-          card.className = 'home-trip-card flex items-center gap-4 p-4 rounded-lg bg-primary/10 dark:bg-primary/20 cursor-pointer hover:bg-primary/20 dark:hover:bg-primary/30 transition-colors';
-          card.dataset.tripId = t.id;
-          // icon container
-          const iconWrap = document.createElement('div');
-          iconWrap.className = 'flex items-center justify-center rounded-lg bg-primary/20 dark:bg-primary/30 p-3';
-          const icon = document.createElement('span');
-          icon.className = 'material-symbols-outlined text-primary';
-          icon.textContent = 'travel_explore';
-          iconWrap.appendChild(icon);
-          card.appendChild(iconWrap);
-          // text wrapper
-          const textWrap = document.createElement('div');
-          const nameEl = document.createElement('p');
-          nameEl.className = 'font-semibold text-slate-800 dark:text-slate-200';
-          nameEl.textContent = t.name;
-          const dateEl = document.createElement('p');
-          dateEl.className = 'text-sm text-slate-500 dark:text-slate-400';
-          dateEl.textContent = `${t.startDate} - ${t.endDate}`;
-          textWrap.appendChild(nameEl);
-          textWrap.appendChild(dateEl);
-          card.appendChild(textWrap);
-          upcomingContainer.appendChild(card);
-        });
-        // Allow users to click upcoming trip cards to edit the selected trip.  When a card
-        // is clicked, we navigate to the Add Vacation page in edit mode with a redirect
-        // back to the home page.  Event delegation ensures that dynamically created
-        // cards remain interactive.
-        on(upcomingContainer, 'click', (e) => {
-          const card = e.target.closest('.home-trip-card');
-          if (!card) return;
-          const id = card.dataset.tripId;
-          if (!id) return;
-          e.preventDefault();
-          window.location.href = `addvac.html?edit=${encodeURIComponent(id)}&redirect=homepage.html`;
-        });
+function renderUpcomingTripsSection(trips) {
+  const upcomingContainer = qs('#home-upcoming');
+  if (!upcomingContainer) return;
+  upcomingContainer.innerHTML = '';
+
+  if (!Array.isArray(trips) || trips.length === 0) {
+    upcomingContainer.appendChild(createPlaceholderMessage('No upcoming trips.'));
+    setSingletonListener(upcomingContainer, 'click', null, '_wlUpcomingHandler');
+    return;
+  }
+
+  const sortedTrips = trips.slice().sort((a, b) => new Date(a.startDate) - new Date(b.startDate));
+  const frag = document.createDocumentFragment();
+  sortedTrips.forEach(trip => {
+    if (!trip || !trip.id) return;
+    frag.appendChild(createUpcomingTripCard(trip));
+  });
+  upcomingContainer.appendChild(frag);
+
+  setSingletonListener(upcomingContainer, 'click', (e) => {
+    const card = e.target.closest('.home-trip-card');
+    if (!card) return;
+    const id = card.dataset.tripId;
+    if (!id) return;
+    e.preventDefault();
+    window.location.href = `addvac.html?edit=${encodeURIComponent(id)}&redirect=homepage.html`;
+  }, '_wlUpcomingHandler');
+}
+
+function renderSummarySection(trips) {
+  const summaryEl = qs('#home-summary');
+  if (!summaryEl) return;
+  summaryEl.innerHTML = '';
+
+  const totalTrips = Array.isArray(trips) ? trips.length : 0;
+  let totalBudget = 0;
+  let totalSpent = 0;
+
+  (trips || []).forEach(t => {
+    const c = t?.cost;
+    if (typeof c === 'number' && !Number.isNaN(c)) {
+      totalBudget += c;
+    }
+    const exps = getExpenses(t.id) || [];
+    exps.forEach(exp => {
+      const amt = Number(exp?.amount);
+      if (!Number.isNaN(amt)) {
+        totalSpent += amt;
       }
-    }
+    });
+  });
 
-    // Populate summary statistics for all trips.  The home page
-    // contains a div#home-summary which is arranged into three
-    // columns.  Each card displays total trips, total budget and
-    // total spent.  Data is computed from the trips array and
-    // associated expenses stored in localStorage.  We use simple
-    // array reductions to aggregate totals.  If there are no trips
-    // yet, placeholder values are shown.
-    const summaryEl = qs('#home-summary');
-    if (summaryEl) {
-      summaryEl.innerHTML = '';
-      const totalTrips = trips.length;
-      // Sum estimated budgets (cost property) ignoring null or NaN
-      let totalBudget = 0;
-      trips.forEach(t => {
-        const c = t.cost;
-        if (typeof c === 'number' && !isNaN(c)) totalBudget += c;
-      });
-      // Sum all expenses across trips
-      let totalSpent = 0;
-      trips.forEach(t => {
-        const exps = getExpenses(t.id) || [];
-        exps.forEach(exp => {
-          const amt = Number(exp.amount);
-          if (!isNaN(amt)) totalSpent += amt;
-        });
-      });
-      // Helper to build a card
-      function makeCard(title, value, iconName) {
-        const card = document.createElement('div');
-        card.className = 'bg-white dark:bg-slate-900 p-4 rounded-lg shadow-sm flex items-center gap-4';
-        const iconWrap = document.createElement('div');
-        iconWrap.className = 'p-3 rounded-full bg-primary/10 dark:bg-primary/20';
-        const icon = document.createElement('span');
-        icon.className = 'material-symbols-outlined text-primary';
-        icon.textContent = iconName;
-        iconWrap.appendChild(icon);
-        card.appendChild(iconWrap);
-        const text = document.createElement('div');
-        const tEl = document.createElement('p');
-        tEl.className = 'text-sm text-slate-500 dark:text-slate-400';
-        tEl.textContent = title;
-        const vEl = document.createElement('p');
-        vEl.className = 'text-xl font-bold text-slate-900 dark:text-white';
-        vEl.textContent = value;
-        text.appendChild(tEl);
-        text.appendChild(vEl);
-        card.appendChild(text);
-        return card;
-      }
-      const cards = [];
-      cards.push(makeCard('Trips', String(totalTrips), 'travel_explore'));
-      cards.push(makeCard('Total Budget', fmtMoney(totalBudget), 'account_balance_wallet'));
-      cards.push(makeCard('Total Spent', fmtMoney(totalSpent), 'paid'));
-      cards.forEach(c => summaryEl.appendChild(c));
-    }
+  const cards = [
+    createSummaryCard('Trips', String(totalTrips), 'travel_explore'),
+    createSummaryCard('Total Budget', fmtMoney(totalBudget), 'account_balance_wallet'),
+    createSummaryCard('Total Spent', fmtMoney(totalSpent), 'paid')
+  ];
 
-    // Render upcoming reminders on the home page.  The template
-    // includes a <div id="home-upcoming-reminders"> which we
-    // populate with the next three reminders across all trips.  We
-    // leverage a binary search tree (ReminderTree) to sort reminders
-    // chronologically.  Only reminders scheduled for today or in the
-    // future are considered upcoming.  If there are no reminders, a
-    // placeholder message is shown.
-    const remindersContainer = qs('#home-upcoming-reminders');
-    if (remindersContainer) {
-      remindersContainer.innerHTML = '';
-      const allRems = getReminders(me.email) || [];
-      // Build a binary tree keyed by reminder date
-      const tree = new ReminderTree();
-      allRems.forEach(rem => tree.insert(rem));
-      // Collect reminders in chronological order
-      const sortedRems = [];
-      tree.inOrder((rem) => { sortedRems.push(rem); });
-      // Filter out past reminders
-      const today = new Date().toISOString().split('T')[0];
-      const upcoming = sortedRems.filter(r => r.date >= today).slice(0, 3);
-      if (upcoming.length === 0) {
-        const msg = document.createElement('p');
-        msg.className = 'text-sm opacity-70';
-        msg.textContent = 'No upcoming reminders.';
-        remindersContainer.appendChild(msg);
-      } else {
-        upcoming.forEach(rem => {
-          const card = document.createElement('div');
-          card.className = 'flex items-center gap-4 p-4 rounded-lg bg-primary/10 dark:bg-primary/20';
-          // icon
-          const iconWrap = document.createElement('div');
-          iconWrap.className = 'flex items-center justify-center rounded-lg bg-primary/20 dark:bg-primary/30 p-3';
-          const icon = document.createElement('span');
-          icon.className = 'material-symbols-outlined text-primary';
-          icon.textContent = 'event';
-          iconWrap.appendChild(icon);
-          card.appendChild(iconWrap);
-          // text
-          const textWrap = document.createElement('div');
-          const nameEl = document.createElement('p');
-          nameEl.className = 'font-semibold text-slate-800 dark:text-slate-200';
-          nameEl.textContent = rem.name;
-          const dateEl = document.createElement('p');
-          dateEl.className = 'text-sm text-slate-500 dark:text-slate-400';
-          dateEl.textContent = rem.date;
-          textWrap.appendChild(nameEl);
-          textWrap.appendChild(dateEl);
-          card.appendChild(textWrap);
-          remindersContainer.appendChild(card);
-        });
-      }
-    }
+  const frag = document.createDocumentFragment();
+  cards.forEach(card => frag.appendChild(card));
+  summaryEl.appendChild(frag);
+}
 
-  // Event delegation for edit and delete actions. Listen for clicks on
-  // ``#trip-details`` (or its child buttons) and handle accordingly. This
-  // ensures that even if the buttons are recreated during rendering,
-  // the handlers remain attached.
-  if (tripBox && !tripBox._wlTripActionHandler) {
-    const handler = async (e) => {
+function renderRemindersSection(email) {
+  const remindersContainer = qs('#home-upcoming-reminders');
+  if (!remindersContainer) return;
+  remindersContainer.innerHTML = '';
+
+  const allRems = getReminders(email) || [];
+  const tree = new ReminderTree();
+  allRems.forEach(rem => tree.insert(rem));
+
+  const sortedRems = [];
+  tree.inOrder(rem => { sortedRems.push(rem); });
+  const today = new Date().toISOString().split('T')[0];
+  const upcoming = sortedRems.filter(r => r.date >= today).slice(0, 3);
+
+  if (upcoming.length === 0) {
+    remindersContainer.appendChild(createPlaceholderMessage('No upcoming reminders.'));
+    return;
+  }
+
+  const frag = document.createDocumentFragment();
+  upcoming.forEach(rem => {
+    if (!rem) return;
+    frag.appendChild(createReminderCard(rem));
+  });
+  remindersContainer.appendChild(frag);
+}
+
+function renderHomepage(me) {
+  wireNewTripButton('homepage.html');
+  const trips = getTrips(me.email);
+  const tripBox = renderTripDetailsSection(trips);
+  renderUpcomingTripsSection(trips);
+  renderSummarySection(trips);
+  renderRemindersSection(me.email);
+
+  if (tripBox) {
+    setSingletonListener(tripBox, 'click', async (e) => {
       const target = e.target.closest('button');
       if (!target) return;
       const currentId = tripBox?.dataset?.currentTripId;
@@ -1573,9 +1561,7 @@ function renderHomepage(me) {
         renderHomepage(me);
         maybeWireCalendar(me);
       }
-    };
-    tripBox.addEventListener('click', handler);
-    tripBox._wlTripActionHandler = handler;
+    }, '_wlTripActionHandler');
   }
 }
 
