@@ -455,53 +455,49 @@ async function syncFromSupabase(me) {
  *
  * @param {string} email The email of the user owning the trips
  * @param {Array<Object>} trips The array of trip objects
+ * @param {Array<string>} deletedTripIds Trip ids that were removed locally and should be pruned remotely
  */
-async function writeTripsToSupabase(email, trips) {
+async function writeTripsToSupabase(email, trips, deletedTripIds = []) {
   /**
    * Persist an array of trips to Supabase.
    *
-   * Each trip object is upserted into the `trips` table along with
-   * the owning user's email.  Before inserting, any remote rows that
-   * are no longer present locally are removed to keep deletions in
-   * sync.  Operations are batched to reduce network chatter compared
-   * to issuing one request per trip.
+    * Each trip object is upserted into the `trips` table along with
+    * the owning user's email.  Any remote rows explicitly identified in
+    * `deletedTripIds` are pruned so only confirmed local deletions are
+    * propagated.  Operations are batched to reduce network chatter
+    * compared to issuing one request per trip.
    *
    * @param {string} email The email of the user owning the trips
    * @param {Array<Object>} trips The array of trip objects to persist
    */
   const supabase = window.supabaseClient;
-  if (!supabase || !email || !Array.isArray(trips)) return;
+  if (!supabase || !email) return;
+
+  const removals = Array.isArray(deletedTripIds)
+    ? deletedTripIds.filter((id) => typeof id === 'string' && id)
+    : [];
+  if (removals.length) {
+    try {
+      const { error: deleteError } = await supabase
+        .from('trips')
+        .delete()
+        .eq('email', email)
+        .in('id', removals);
+      if (deleteError) {
+        console.error('Error deleting removed trips from Supabase:', deleteError);
+      }
+    } catch (err) {
+      console.error('Error pruning trips in Supabase:', err);
+    }
+  }
+
+  if (!Array.isArray(trips) || !trips.length) {
+    return;
+  }
 
   const payload = trips
-    .filter(trip => trip && trip.id)
-    .map(trip => ({ ...trip, email }));
-  const keepIds = new Set(payload.map(trip => trip.id));
-
-  try {
-    const { data: remoteRows, error: fetchError } = await supabase
-      .from('trips')
-      .select('id')
-      .eq('email', email);
-    if (fetchError) {
-      console.error('Error fetching trips from Supabase:', fetchError);
-    } else if (Array.isArray(remoteRows) && remoteRows.length) {
-      const staleIds = remoteRows
-        .map(row => row?.id)
-        .filter(id => id && !keepIds.has(id));
-      if (staleIds.length) {
-        const { error: deleteError } = await supabase
-          .from('trips')
-          .delete()
-          .eq('email', email)
-          .in('id', staleIds);
-        if (deleteError) {
-          console.error('Error deleting removed trips from Supabase:', deleteError);
-        }
-      }
-    }
-  } catch (err) {
-    console.error('Error pruning trips in Supabase:', err);
-  }
+    .filter((trip) => trip && trip.id)
+    .map((trip) => ({ ...trip, email }));
 
   if (!payload.length) {
     return;
@@ -921,13 +917,16 @@ function addLogoutShortcut() {
 function getTrips(email) {
   return store.get(tripsKey(email), []);
 }
-function saveTrips(email, trips) {
+function saveTrips(email, trips, options = {}) {
   // Persist trips to localStorage
   store.set(tripsKey(email), trips);
   // Also persist trips to Firestore (if Firebase is initialised).  This
   // asynchronous call runs in the background and does not block
   // the UI.  Errors, if any, are logged by writeTripsToSupabase.
-  writeTripsToSupabase(email, trips);
+  const deletedTripIds = Array.isArray(options.deletedTripIds)
+    ? options.deletedTripIds
+    : [];
+  writeTripsToSupabase(email, trips, deletedTripIds);
 }
 
 async function deleteTripCascade(email, tripId) {
@@ -936,7 +935,7 @@ async function deleteTripCascade(email, tripId) {
   }
 
   const remainingTrips = (getTrips(email) || []).filter((trip) => trip?.id !== tripId);
-  saveTrips(email, remainingTrips);
+  saveTrips(email, remainingTrips, { deletedTripIds: [tripId] });
 
   // Clear cached datasets associated with the trip
   store.remove(expensesKey(tripId));
