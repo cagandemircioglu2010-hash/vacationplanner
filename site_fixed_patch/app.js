@@ -46,6 +46,28 @@ const qs  = (sel, root = document) => root.querySelector(sel);
 const qsa = (sel, root = document) => Array.from(root.querySelectorAll(sel));
 const on  = (el, ev, cb, opts) => el && el.addEventListener(ev, cb, opts);
 
+/**
+ * Attach an event listener that replaces any previously registered handler for
+ * the same element, event name and key.  This keeps wiring idempotent so pages
+ * can safely call their setup functions multiple times (for example after a
+ * `pageshow` event) without accumulating duplicate listeners that fire more
+ * than once.
+ *
+ * @param {EventTarget} el The element to bind the listener to
+ * @param {string} ev The event name (e.g. "click")
+ * @param {Function} cb The handler function to invoke
+ * @param {string} [key=''] Optional suffix to distinguish multiple handlers on the same element/event
+ */
+function bindEventOnce(el, ev, cb, key = '') {
+  if (!el) return;
+  const token = `_wlHandler_${ev}_${key || 'default'}`;
+  if (el[token]) {
+    el.removeEventListener(ev, el[token]);
+  }
+  el[token] = cb;
+  el.addEventListener(ev, cb);
+}
+
 const store = {
   get(key, fallback) {
     try {
@@ -1639,7 +1661,7 @@ function wireBudgetPage(me) {
     // Set the dropdown to reflect the current converter state.  If the converter
     // has not yet been initialised, selected remains 'USD'.
     currencySelectEl.value = currencyConverter.selected;
-    on(currencySelectEl, 'change', (e) => {
+    const handleCurrencyChange = (e) => {
       currencyConverter.setCurrency(e.target.value);
       // Refresh all calculated views.  Since renderTable() calls updateExpensesChart(), it
       // will indirectly update the chart, but we call updateTopCategories() explicitly
@@ -1647,7 +1669,8 @@ function wireBudgetPage(me) {
       renderTable();
       updateExpensesChart();
       updateTopCategories();
-    });
+    };
+    bindEventOnce(currencySelectEl, 'change', handleCurrencyChange, 'currency-change');
   }
 
   if (!(vacNameEl || totalEl || addBtn || table)) return; // not this page
@@ -1707,7 +1730,7 @@ function wireBudgetPage(me) {
     }
     setStoredTripSelection(me.email, selectedId || null);
     ensureTripQueryMatches(selectedId);
-    on(vacNameEl, 'change', (ev) => {
+    const handleTripChange = (ev) => {
       const id = ev.target.value;
       setStoredTripSelection(me.email, id || null);
       const url = new URL(window.location.href);
@@ -1717,7 +1740,8 @@ function wireBudgetPage(me) {
         url.searchParams.delete('trip');
       }
       window.location.href = url.pathname + url.search + url.hash;
-    });
+    };
+    bindEventOnce(vacNameEl, 'change', handleTripChange, 'trip-change');
   }
 
     // Expose the current active trip on the global window object so that
@@ -1760,7 +1784,6 @@ function wireBudgetPage(me) {
     // non-budget pages), this code has no effect.
     const undoBtn = qs('#undo-delete-btn');
     if (undoBtn) {
-      undoBtn.removeEventListener('click', undoBtn._wlUndoHandler || (()=>{}));
       const handler = (ev) => {
         ev.preventDefault();
         const last = deletedStack.pop();
@@ -1774,8 +1797,7 @@ function wireBudgetPage(me) {
         }
         updateUndoButton();
       };
-      undoBtn._wlUndoHandler = handler;
-      undoBtn.addEventListener('click', handler);
+      bindEventOnce(undoBtn, 'click', handler, 'undo-delete');
     }
 
     // Ensure the undo button reflects the current state of the stack when the
@@ -2222,13 +2244,14 @@ function wireBudgetPage(me) {
     editingExpenseId = null;
   }
   // When the Add Expense button is clicked, reveal the form for a new entry
-  on(addBtn, 'click', (e) => {
+  const handleAddExpense = (e) => {
     e.preventDefault();
     resetExpenseForm();
     showExpenseForm();
-  });
+  };
+  bindEventOnce(addBtn, 'click', handleAddExpense, 'expense-add');
   // Save handler: validate fields and either create a new expense or update an existing one
-  on(expSaveBtn, 'click', (e) => {
+  const handleExpenseSave = (e) => {
     e.preventDefault();
     if (!expName || !expAmt || !expDate) return;
     const name = expName.value.trim();
@@ -2252,15 +2275,17 @@ function wireBudgetPage(me) {
     hideExpenseForm();
     resetExpenseForm();
     renderTable();
-  });
+  };
+  bindEventOnce(expSaveBtn, 'click', handleExpenseSave, 'expense-save');
   // Cancel handler: hide form without saving
-  on(expCancelBtn, 'click', (e) => {
+  const handleExpenseCancel = (e) => {
     e.preventDefault();
     hideExpenseForm();
     resetExpenseForm();
-  });
+  };
+  bindEventOnce(expCancelBtn, 'click', handleExpenseCancel, 'expense-cancel');
 
-  on(tbody, 'click', (e) => {
+  const handleTableClick = (e) => {
     const btn = e.target.closest('button');
     if (!btn) return;
     const tr  = e.target.closest('tr');
@@ -2287,9 +2312,10 @@ function wireBudgetPage(me) {
       editingExpenseId = id;
       showExpenseForm();
     }
-  });
+  };
+  bindEventOnce(tbody, 'click', handleTableClick, 'table-actions');
 
-    on(totalEl, "change", () => {
+    const handleBudgetChange = () => {
       // When the total budget changes, update the cost on the trip and
       // persist it.  Use parseCurrency to handle formatted input.
       if (!activeTrip?.id) {
@@ -2309,7 +2335,8 @@ function wireBudgetPage(me) {
       }
       updateBudgetInputState();
       renderTable();
-    });
+    };
+    bindEventOnce(totalEl, 'change', handleBudgetChange, 'budget-change');
 
   // Minimal reminders functionality has been removed from the budget page.
   // Reminders are now managed on a separate page (reminders.html).
@@ -2970,16 +2997,17 @@ function wireRemindersPage(me) {
     });
   }
   // When trip selection changes, refresh the reminders list and persist the choice
-  tripSelect.addEventListener('change', () => {
+  const handleTripSelectChange = () => {
     const id = tripSelect.value;
     setStoredTripSelection(me.email, id || null);
     syncTripQuery(id);
     updateAddButtonState();
     renderList();
-  });
+  };
+  bindEventOnce(tripSelect, 'change', handleTripSelectChange, 'reminders-trip');
   // Add new reminder
   if (addBtn) {
-    addBtn.addEventListener('click', (ev) => {
+    const handleAddReminder = (ev) => {
       ev.preventDefault();
       const tripId = tripSelect.value;
       const name   = (nameEl?.value || '').trim();
@@ -2997,7 +3025,8 @@ function wireRemindersPage(me) {
       if (nameEl) nameEl.value = '';
       if (dateEl) dateEl.value = '';
       renderList();
-    });
+    };
+    bindEventOnce(addBtn, 'click', handleAddReminder, 'reminder-add');
   }
   updateAddButtonState();
   // Initial render
@@ -3094,14 +3123,15 @@ function wirePackingPage(me) {
     });
   }
 
-  tripSelect.addEventListener('change', () => {
+  const handlePackingTripChange = () => {
     const id = tripSelect.value;
     setStoredTripSelection(me.email, id || null);
     updateAddButtonState();
     renderList();
-  });
+  };
+  bindEventOnce(tripSelect, 'change', handlePackingTripChange, 'packing-trip');
 
-  addBtn.addEventListener('click', (ev) => {
+  const handleAddPackingItem = (ev) => {
     ev.preventDefault();
     const tripId = tripSelect.value;
     const name = (inputEl.value || '').trim();
@@ -3114,7 +3144,8 @@ function wirePackingPage(me) {
     savePackingItems(tripId, updated);
     inputEl.value = '';
     renderList();
-  });
+  };
+  bindEventOnce(addBtn, 'click', handleAddPackingItem, 'packing-add');
 
   updateAddButtonState();
   renderList();
