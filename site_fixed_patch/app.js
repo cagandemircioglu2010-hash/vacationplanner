@@ -1319,6 +1319,8 @@ function wireAddVacationPage(me) {
     const loc = locEl?.value?.trim();
     const start = startEl?.value || "";
     const end = endEl?.value || "";
+    const startTime = start ? new Date(start).getTime() : NaN;
+    const endTime = end ? new Date(end).getTime() : NaN;
     const cost = costEl?.value ? Number(costEl.value) : null;
     const notes = notesEl?.value?.trim() || null;
 
@@ -1328,7 +1330,10 @@ function wireAddVacationPage(me) {
     if (!name || !loc || !start || !end) {
       return;
     }
-    if (end < start) {
+    if (!Number.isFinite(startTime) || !Number.isFinite(endTime)) {
+      return;
+    }
+    if (endTime < startTime) {
       return;
     }
     if (costEl?.value && (!Number.isFinite(cost) || cost < 0)) {
@@ -1343,7 +1348,12 @@ function wireAddVacationPage(me) {
       const tripStart = trip.startDate || trip.start_date || "";
       const tripEnd = trip.endDate || trip.end_date || "";
       if (!tripStart || !tripEnd) return false;
-      return !(end < tripStart || start > tripEnd);
+      const tripStartTime = new Date(tripStart).getTime();
+      const tripEndTime = new Date(tripEnd).getTime();
+      if (!Number.isFinite(tripStartTime) || !Number.isFinite(tripEndTime)) {
+        return false;
+      }
+      return !(endTime < tripStartTime || startTime > tripEndTime);
     });
 
     if (hasOverlap) {
