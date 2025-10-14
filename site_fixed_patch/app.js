@@ -1289,6 +1289,18 @@ function wireAddVacationPage(me) {
   const endEl = qs("#end-date");
   const costEl = qs("#cost");
   const notesEl = qs("#notes");
+  const errorBanner = qs("#trip-error");
+
+  const setTripError = (msg = "") => {
+    if (!errorBanner) return;
+    if (msg) {
+      errorBanner.textContent = msg;
+      errorBanner.classList.remove("hidden");
+    } else {
+      errorBanner.textContent = "";
+      errorBanner.classList.add("hidden");
+    }
+  };
 
   const syncEndMin = () => {
     if (startEl?.value) {
@@ -1301,11 +1313,14 @@ function wireAddVacationPage(me) {
 
   on(form, "submit", async (e) => {
     e.preventDefault();
+    setTripError("");
     // validate
     const name = nameEl?.value?.trim();
     const loc = locEl?.value?.trim();
     const start = startEl?.value || "";
     const end = endEl?.value || "";
+    const startTime = start ? new Date(start).getTime() : NaN;
+    const endTime = end ? new Date(end).getTime() : NaN;
     const cost = costEl?.value ? Number(costEl.value) : null;
     const notes = notesEl?.value?.trim() || null;
 
@@ -1315,7 +1330,10 @@ function wireAddVacationPage(me) {
     if (!name || !loc || !start || !end) {
       return;
     }
-    if (end < start) {
+    if (!Number.isFinite(startTime) || !Number.isFinite(endTime)) {
+      return;
+    }
+    if (endTime < startTime) {
       return;
     }
     if (costEl?.value && (!Number.isFinite(cost) || cost < 0)) {
@@ -1324,6 +1342,24 @@ function wireAddVacationPage(me) {
 
     const trips = getTrips(me.email);
     const editId = form.dataset.editId;
+    const hasOverlap = trips.some(trip => {
+      if (!trip) return false;
+      if (editId && trip.id === editId) return false;
+      const tripStart = trip.startDate || trip.start_date || "";
+      const tripEnd = trip.endDate || trip.end_date || "";
+      if (!tripStart || !tripEnd) return false;
+      const tripStartTime = new Date(tripStart).getTime();
+      const tripEndTime = new Date(tripEnd).getTime();
+      if (!Number.isFinite(tripStartTime) || !Number.isFinite(tripEndTime)) {
+        return false;
+      }
+      return !(endTime < tripStartTime || startTime > tripEndTime);
+    });
+
+    if (hasOverlap) {
+      setTripError("You already have a trip scheduled during these dates. Please adjust the schedule or update the existing trip.");
+      return;
+    }
     let selectionId = null;
     if (editId) {
       const idx = trips.findIndex(t => t.id === editId);
