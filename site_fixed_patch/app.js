@@ -215,19 +215,19 @@ class ReminderTree {
  *
  * @param {Object} user { email, name, passHash, createdAt }
  */
-function writeUserToSupabase(user) {
+async function writeUserToSupabase(user) {
   const supabase = window.supabaseClient;
   if (!supabase) return;
-  (async () => {
-    try {
-      const { error } = await supabase.from('users').upsert(user);
-      if (error) {
-        console.error('Error writing user to Supabase:', error);
-      }
-    } catch (err) {
-      console.error('Error writing user to Supabase:', err);
+  try {
+    const { error } = await supabase.from('users').upsert(user);
+    if (error) {
+      console.error('Error writing user to Supabase:', error);
+      throw error;
     }
-  })();
+  } catch (err) {
+    console.error('Error writing user to Supabase:', err);
+    throw err;
+  }
 }
 async function readTripsFromSupabase(email) {
   /**
@@ -485,7 +485,7 @@ async function syncFromSupabase(me) {
   if (remoteTrips.length) {
     const merged = mergeTripCollections(localTrips, remoteTrips);
     if (serializeTripsForComparison(merged) !== serializeTripsForComparison(localTrips)) {
-      saveTrips(me.email, merged); // uses existing function in app.js
+      await saveTrips(me.email, merged); // uses existing function in app.js
     }
     effectiveTrips = merged;
   }
@@ -972,10 +972,16 @@ async function handleRegisterPage() {
     users.push(newUser);
     store.set(KEY_USERS, users);
     store.set(KEY_SESSION, { email }); // auto-login
-    // Persist the new user to Firestore.  This call is asynchronous
-    // and runs in the background.
-        // Write the user record to Supabase instead of Firestore
-        writeUserToSupabase(newUser);
+    // Persist the new user to Supabase before redirecting.  Awaiting the
+    // write guarantees that dependent data (such as trips) can safely
+    // reference the user row without hitting foreign key violations.
+    try {
+      await writeUserToSupabase(newUser);
+    } catch (err) {
+      // The helper already logs detailed error information.  Continue with
+      // the redirect so the demo remains usable even if Supabase is
+      // temporarily unavailable.
+    }
     // Directly redirect to the home page upon successful account creation.  A dedicated
     // notification area could be used to display a success message if desired.
     window.location.href = "homepage.html";
@@ -1042,10 +1048,9 @@ function getTrips(email) {
 function saveTrips(email, trips) {
   // Persist trips to localStorage
   store.set(tripsKey(email), trips);
-  // Also persist trips to Firestore (if Firebase is initialised).  This
-  // asynchronous call runs in the background and does not block
-  // the UI.  Errors, if any, are logged by writeTripsToSupabase.
-  writeTripsToSupabase(email, trips);
+  // Also persist trips to Supabase.  Returning the promise allows callers to
+  // await completion when subsequent writes depend on the trip rows existing.
+  return writeTripsToSupabase(email, trips);
 }
 
 async function deleteTripCascade(email, tripId) {
@@ -1054,7 +1059,7 @@ async function deleteTripCascade(email, tripId) {
   }
 
   const remainingTrips = (getTrips(email) || []).filter((trip) => trip?.id !== tripId);
-  saveTrips(email, remainingTrips);
+  await saveTrips(email, remainingTrips);
 
   // Clear cached datasets associated with the trip
   store.remove(expensesKey(tripId));
@@ -1229,7 +1234,7 @@ function wireAddVacationPage(me) {
   on(startEl, "change", syncEndMin);
   syncEndMin();
 
-  on(form, "submit", (e) => {
+  on(form, "submit", async (e) => {
     e.preventDefault();
     // validate
     const name = nameEl?.value?.trim();
@@ -1268,7 +1273,11 @@ function wireAddVacationPage(me) {
       trips.push({ id, name, location: loc, startDate: start, endDate: end, cost, notes, days, createdAt: nowISO(), updatedAt: nowISO() });
       selectionId = id;
     }
-    saveTrips(me.email, trips);
+    try {
+      await saveTrips(me.email, trips);
+    } catch (err) {
+      console.error('Failed to save trip before redirecting:', err);
+    }
     if (selectionId) {
       setStoredTripSelection(me.email, selectionId);
     }
@@ -2334,7 +2343,7 @@ function wireBudgetPage(me) {
   };
   bindEventOnce(tbody, 'click', handleTableClick, 'table-actions');
 
-    const handleBudgetChange = () => {
+    const handleBudgetChange = async () => {
       // When the total budget changes, update the cost on the trip and
       // persist it.  Use parseCurrency to handle formatted input.
       if (!activeTrip?.id) {
@@ -2348,7 +2357,11 @@ function wireBudgetPage(me) {
       const idx = tripsAll.findIndex(t => t.id === activeTrip.id);
       if (idx >= 0) {
         tripsAll[idx].cost = newBudget;
-        saveTrips(me.email, tripsAll);
+        try {
+          await saveTrips(me.email, tripsAll);
+        } catch (err) {
+          console.error('Failed to persist updated trip budget:', err);
+        }
         // also update the in-memory activeTrip reference
         activeTrip.cost = newBudget;
       }
@@ -2759,12 +2772,16 @@ function maybeWireCalendar(me) {
       const dupBtn = document.createElement('button');
       dupBtn.className = 'text-green-600 text-sm hover:underline';
       dupBtn.textContent = 'Duplicate';
-      dupBtn.addEventListener('click', (ev) => {
+      dupBtn.addEventListener('click', async (ev) => {
         ev.preventDefault();
         // Create a deep copy of the trip with a new ID and timestamps
         const newTrip = { ...trip, id: uid('trip'), createdAt: nowISO(), updatedAt: nowISO() };
         trips.push(newTrip);
-        saveTrips(me.email, trips);
+        try {
+          await saveTrips(me.email, trips);
+        } catch (err) {
+          console.error('Failed to duplicate trip in Supabase:', err);
+        }
         // Re-render cards to include the duplicate
         renderCards(query);
         maybeWireCalendar(me);
