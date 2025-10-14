@@ -47,6 +47,68 @@ const qsa = (sel, root = document) => Array.from(root.querySelectorAll(sel));
 const on  = (el, ev, cb, opts) => el && el.addEventListener(ev, cb, opts);
 
 /**
+ * Perform a stable merge sort on the provided array using the supplied
+ * comparison callback.  The original array remains untouched; a new sorted
+ * array is returned.  This implementation avoids Array.prototype.sort so the
+ * application retains full control over ordering logic regardless of the
+ * execution environment.
+ *
+ * @template T
+ * @param {T[]} array The values to sort
+ * @param {(a: T, b: T) => number} [compareFn] Comparison function returning
+ *   a negative number when `a` comes before `b`, zero when equal, and a
+ *   positive number otherwise.  Defaults to lexicographic comparison.
+ * @returns {T[]} A new array containing the sorted values
+ */
+function mergeSort(array, compareFn) {
+  if (!Array.isArray(array)) return [];
+  const comparator = typeof compareFn === 'function'
+    ? compareFn
+    : (a, b) => {
+        const aStr = String(a);
+        const bStr = String(b);
+        if (aStr === bStr) return 0;
+        return aStr > bStr ? 1 : -1;
+      };
+
+  function merge(left, right) {
+    const merged = [];
+    let i = 0;
+    let j = 0;
+    while (i < left.length && j < right.length) {
+      if (comparator(left[i], right[j]) <= 0) {
+        merged.push(left[i]);
+        i += 1;
+      } else {
+        merged.push(right[j]);
+        j += 1;
+      }
+    }
+    while (i < left.length) {
+      merged.push(left[i]);
+      i += 1;
+    }
+    while (j < right.length) {
+      merged.push(right[j]);
+      j += 1;
+    }
+    return merged;
+  }
+
+  function sort(items) {
+    if (items.length <= 1) {
+      return items;
+    }
+    const mid = Math.floor(items.length / 2);
+    const left = sort(items.slice(0, mid));
+    const right = sort(items.slice(mid));
+    return merge(left, right);
+  }
+
+  return sort(array.slice());
+}
+
+/**
  * Attach an event listener that replaces any previously registered handler for
  * the same element, event name and key.  This keeps wiring idempotent so pages
  * can safely call their setup functions multiple times (for example after a
@@ -466,7 +528,7 @@ function mergeTripCollections(localTrips = [], remoteTrips = []) {
 }
 
 function serializeTripsForComparison(trips = []) {
-  const clone = trips.map((trip) => ({ ...trip })).sort((a, b) => {
+  const clone = mergeSort(trips.map((trip) => ({ ...trip })), (a, b) => {
     const aId = a.id || '';
     const bId = b.id || '';
     return aId.localeCompare(bId);
@@ -1133,7 +1195,7 @@ function findTripById(email, id) {
 
 function nextUpcomingTrip(trips) {
   const today = new Date();
-  const future = trips.slice().sort((a, b) => new Date(a.startDate) - new Date(b.startDate));
+  const future = mergeSort(trips.slice(), (a, b) => new Date(a.startDate) - new Date(b.startDate));
   return future.find(t => new Date(t.endDate) >= today) || future[0] || null;
 }
 
@@ -1462,7 +1524,7 @@ function renderUpcomingTripsSection(trips) {
     return;
   }
 
-  const sortedTrips = trips.slice().sort((a, b) => new Date(a.startDate) - new Date(b.startDate));
+  const sortedTrips = mergeSort(trips.slice(), (a, b) => new Date(a.startDate) - new Date(b.startDate));
   const frag = document.createDocumentFragment();
   sortedTrips.forEach(trip => {
     if (!trip || !trip.id) return;
@@ -1931,7 +1993,7 @@ function wireBudgetPage(me) {
         const amt = Number(exp.amount) || 0;
         totals[cat] = (totals[cat] || 0) + amt;
       });
-      const entries = Object.entries(totals).sort((a,b) => b[1] - a[1]);
+      const entries = mergeSort(Object.entries(totals), (a, b) => b[1] - a[1]);
       if (entries.length === 0) {
         const msg = document.createElement('p');
         msg.className = 'text-sm opacity-70';
@@ -2687,7 +2749,7 @@ function maybeWireCalendar(me) {
         li.textContent = 'No upcoming trips.';
         list.appendChild(li);
       } else {
-        const sorted = trips.slice().sort((a, b) => new Date(a.startDate) - new Date(b.startDate));
+        const sorted = mergeSort(trips.slice(), (a, b) => new Date(a.startDate) - new Date(b.startDate));
         sorted.forEach(t => {
           const li = document.createElement('li');
           li.className = 'flex items-center gap-4 p-3 rounded-lg bg-primary/10 dark:bg-primary/20 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer transition-colors';
@@ -2990,15 +3052,15 @@ function wireRemindersPage(me) {
     const allRems = store.get(remindersKey(me.email), []) || [];
     const rems = allRems.filter(r => r.tripId === tripId);
     // sort by date ascending
-    rems.sort((a, b) => new Date(a.date) - new Date(b.date));
-    if (rems.length === 0) {
+    const sortedRems = mergeSort(rems, (a, b) => new Date(a.date) - new Date(b.date));
+    if (sortedRems.length === 0) {
       const msg = document.createElement('li');
       msg.className = 'text-sm text-gray-600 dark:text-gray-400';
       msg.textContent = 'No reminders yet.';
       listEl.appendChild(msg);
       return;
     }
-    rems.forEach(r => {
+    sortedRems.forEach(r => {
       const li = document.createElement('li');
       li.className = 'flex items-center justify-between p-4 rounded-lg bg-gray-100 dark:bg-gray-800';
       // description
