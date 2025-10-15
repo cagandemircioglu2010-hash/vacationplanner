@@ -95,13 +95,13 @@
 <div class="grid grid-cols-1 sm:grid-cols-2 gap-6">
 <div>
 <label class="block text-sm font-medium mb-2" for="start-date">Start Date</label>
-            <!-- Use a text input instead of type="date" to improve compatibility in environments where the datepicker cannot be interacted with (e.g. automated testing).  Users can still enter a date in ISO format (YYYY-MM-DD).  The pattern ensures basic validation. -->
-            <input class="form-input w-full rounded-lg border-border-light dark:border-border-dark bg-background-light dark:bg-subtle-dark focus:border-primary focus:ring-primary placeholder:text-muted-light dark:placeholder:text-muted-dark py-3 px-4" id="start-date" name="start_date" type="text" placeholder="YYYY-MM-DD" pattern="\d{4}-\d{2}-\d{2}" required />
+            <!-- Native date inputs provide a calendar picker so guests can choose dates without typing. -->
+            <input class="form-input w-full rounded-lg border-border-light dark:border-border-dark bg-background-light dark:bg-subtle-dark focus:border-primary focus:ring-primary placeholder:text-muted-light dark:placeholder:text-muted-dark py-3 px-4" id="start-date" name="start_date" type="date" required />
 </div>
 <div>
 <label class="block text-sm font-medium mb-2" for="end-date">End Date</label>
-            <!-- Use a text input for end date for the same reasons as the start date.  The placeholder instructs users to enter a ISO date (YYYY-MM-DD). -->
-            <input class="form-input w-full rounded-lg border-border-light dark:border-border-dark bg-background-light dark:bg-subtle-dark focus:border-primary focus:ring-primary placeholder:text-muted-light dark:placeholder:text-muted-dark py-3 px-4" id="end-date" name="end_date" type="text" placeholder="YYYY-MM-DD" pattern="\d{4}-\d{2}-\d{2}" required />
+            <!-- Using type="date" keeps ISO formatting while making selection easier on touch devices and desktops. -->
+            <input class="form-input w-full rounded-lg border-border-light dark:border-border-dark bg-background-light dark:bg-subtle-dark focus:border-primary focus:ring-primary placeholder:text-muted-light dark:placeholder:text-muted-dark py-3 px-4" id="end-date" name="end_date" type="date" required />
 </div>
 </div>
 <div>
