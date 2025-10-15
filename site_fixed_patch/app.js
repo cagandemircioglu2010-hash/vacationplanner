@@ -1808,6 +1808,35 @@ function wireBudgetPage(me) {
   const allTrips = getTrips(me.email) || [];
   let activeTrip = getActiveTripForBudget(me);
 
+  const chartPalette = [
+    '#ef4444', // red
+    '#10b981', // green
+    '#3b82f6', // blue
+    '#f59e0b', // amber
+    '#8b5cf6', // violet
+    '#ec4899', // pink
+    '#f97316', // orange
+    '#13a4ec'  // sky
+  ];
+  const paletteColour = (idx) => chartPalette[idx % chartPalette.length];
+  const normaliseCategoryName = (name) => {
+    if (typeof name !== 'string') return 'Uncategorised';
+    const trimmed = name.trim();
+    return trimmed ? trimmed : 'Uncategorised';
+  };
+  let warnedMissingContext = false;
+  const getCanvasContext = (canvas) => {
+    if (!canvas || typeof canvas.getContext !== 'function') {
+      return null;
+    }
+    const ctx = canvas.getContext('2d');
+    if (!ctx && !warnedMissingContext) {
+      console.warn('Expenses chart skipped: unable to acquire a 2D canvas context.');
+      warnedMissingContext = true;
+    }
+    return ctx;
+  };
+
   const updateBudgetInputState = () => {
     if (!totalEl) return;
     const hasTrip = Boolean(activeTrip?.id);
@@ -2194,7 +2223,7 @@ function wireBudgetPage(me) {
       const rows = activeTrip?.id ? getExpenses(activeTrip.id) : [];
       const coll = new CategoryCollection();
       rows.forEach(r => {
-        const catName = (r.category && r.category.trim()) ? r.category.trim() : 'Uncategorised';
+        const catName = normaliseCategoryName(r.category);
         const amountUSD = parseCurrency(r.amount);
         let monthIndex = 0;
         try {
@@ -2217,16 +2246,6 @@ function wireBudgetPage(me) {
       // Define a palette of distinct colours that correspond to the slices in the
       // expenses breakdown chart.  Reusing the same palette here allows
       // categories in the legend to visually match the chart segments.
-      const palette = [
-        '#ef4444', // red
-        '#10b981', // green
-        '#3b82f6', // blue
-        '#f59e0b', // amber
-        '#8b5cf6', // violet
-        '#ec4899', // pink
-        '#f97316', // orange
-        '#13a4ec'  // sky
-      ];
       sorted.slice(0, 5).forEach((c, idx) => {
         const li = document.createElement('li');
         li.className = 'flex justify-between items-center gap-2';
@@ -2236,7 +2255,7 @@ function wireBudgetPage(me) {
         swatch.style.width = '0.75rem';
         swatch.style.height = '0.75rem';
         swatch.style.borderRadius = '0.125rem';
-        swatch.style.backgroundColor = palette[idx % palette.length];
+        swatch.style.backgroundColor = paletteColour(idx);
         // Category name
         const nameSpan = document.createElement('span');
         nameSpan.textContent = c.name;
@@ -2560,14 +2579,22 @@ function wireBudgetPage(me) {
     // and update the top categories to show no data.  This avoids errors when
     // attempting to access properties on a null active trip.
     if (!at || !at.id) {
-      const ctx = canvas.getContext('2d');
+      const ctx = getCanvasContext(canvas);
       // Clear or reset the chart depending on the rendering mode.  When
       // using the fallback (no Chart.js), clear the canvas entirely.  When
       // Chart.js is available, update or create an empty chart instance.
       if (useCustomChart) {
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        if (ctx) {
+          const clearWidth = canvas.width || canvas.clientWidth || canvas.getBoundingClientRect().width || 0;
+          const clearHeight = canvas.height || canvas.clientHeight || canvas.getBoundingClientRect().height || 0;
+          ctx.clearRect(0, 0, clearWidth, clearHeight);
+        }
         expensesChart = null;
       } else {
+        if (!ctx) {
+          updateTopCategories();
+          return;
+        }
         const emptyLabels = [];
         const emptyData = [];
         const bgColours = [];
@@ -2610,32 +2637,18 @@ function wireBudgetPage(me) {
     // conversion logic to remain centralised in the currencyConverter.
     const rows = at ? getExpenses(at.id) : [];
     const totalsUSD = {};
-    rows.forEach(r => {
-      const cat = (r.category && r.category.trim()) ? r.category.trim() : 'Uncategorised';
-      const amtUSD = parseCurrency(r.amount);
+    rows.forEach((row) => {
+      if (!row) return;
+      const cat = normaliseCategoryName(row.category);
+      const amtUSD = parseCurrency(row.amount);
       totalsUSD[cat] = (totalsUSD[cat] || 0) + amtUSD;
     });
     const labels = Object.keys(totalsUSD);
     // Convert USD totals to the currently selected currency for display
     const data = labels.map(l => currencyConverter.convert(totalsUSD[l]));
-    // Provide a palette of colours.  Repeat if necessary.
-    // Define a palette of distinct colours for the expense categories.  The
-    // order of colours is chosen to maximise contrast between the first few
-    // categories.  This palette is also reused in updateTopCategories()
-    // so that the legend matches the chart.
-    const colours = [
-      '#ef4444', // red
-      '#10b981', // green
-      '#3b82f6', // blue
-      '#f59e0b', // amber
-      '#8b5cf6', // violet
-      '#ec4899', // pink
-      '#f97316', // orange
-      '#13a4ec'  // sky
-    ];
-    const bgColours = labels.map((_, i) => colours[i % colours.length] + '33');
-    const borderColours = labels.map((_, i) => colours[i % colours.length]);
-    const ctx = canvas.getContext('2d');
+    const bgColours = labels.map((_, i) => `${paletteColour(i)}33`);
+    const borderColours = labels.map((_, i) => paletteColour(i));
+    const ctx = getCanvasContext(canvas);
     // When using the fallback implementation, draw a simple pie chart using
     // native Canvas APIs.  Otherwise use Chart.js.  The fallback draws
     // proportional arcs for each category and leaves legend rendering to the
@@ -2668,7 +2681,12 @@ function wireBudgetPage(me) {
       // Obtain fresh context after resizing to avoid using a stale
       // reference.  Some browsers discard the old context when the
       // element is resized.
-      const ctx2 = canvas.getContext('2d');
+      const ctx2 = getCanvasContext(canvas);
+      if (!ctx2) {
+        expensesChart = null;
+        updateTopCategories();
+        return;
+      }
       // Fill a light background so the chart area stands out against the
       // page.  Without this the default transparent canvas could appear
       // invisible when no data is present.
@@ -2691,7 +2709,7 @@ function wireBudgetPage(me) {
           const sliceAngle = (value / total) * 2 * Math.PI;
           ctx2.beginPath();
           ctx2.moveTo(centerX, centerY);
-          ctx2.fillStyle = colours[idx % colours.length];
+          ctx2.fillStyle = paletteColour(idx);
           ctx2.arc(centerX, centerY, radius, startAngle, startAngle + sliceAngle);
           ctx2.closePath();
           ctx2.fill();
@@ -2704,6 +2722,11 @@ function wireBudgetPage(me) {
       // No Chart.js instance is maintained for custom charts
       expensesChart = null;
     } else {
+      if (!ctx) {
+        expensesChart = null;
+        updateTopCategories();
+        return;
+      }
       if (expensesChart) {
         // Update existing chart and dataset label to reflect currency
         expensesChart.data.labels = labels;
