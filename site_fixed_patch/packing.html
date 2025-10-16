@@ -55,16 +55,35 @@
             <!-- New packing list link -->
             <a id="packing-nav" class="px-3 py-2 rounded-md text-sm font-medium text-slate-700 dark:text-slate-300 hover:bg-primary/10 dark:hover:bg-primary/20 hover:text-primary dark:hover:text-primary transition-colors" href="packing.html">Packing</a>
           </nav>
-          <div class="flex items-center gap-4">
-            <!-- User avatar removed per user request -->
-            <a id="logout-button" href="#" class="hidden md:inline-block text-sm font-medium text-slate-700 dark:text-slate-300 hover:text-primary transition-colors">Log&nbsp;Out</a>
-            <button class="md:hidden w-10 h-10 flex items-center justify-center rounded-full text-slate-600 dark:text-slate-400 hover:bg-slate-200/50 dark:hover:bg-slate-800/50 transition-colors">
-              <span class="material-symbols-outlined">menu</span>
-            </button>
-          </div>
+            <div class="flex items-center gap-4">
+              <!-- User avatar removed per user request -->
+              <a id="logout-button" href="#" class="hidden md:inline-block text-sm font-medium text-slate-700 dark:text-slate-300 hover:text-primary transition-colors">Log&nbsp;Out</a>
+              <button type="button" class="md:hidden w-10 h-10 flex items-center justify-center rounded-full text-slate-600 dark:text-slate-400 hover:bg-slate-200/50 dark:hover:bg-slate-800/50 transition-colors" data-mobile-menu-toggle aria-controls="mobile-nav" aria-expanded="false">
+                <span class="sr-only">Open navigation menu</span>
+                <span class="material-symbols-outlined">menu</span>
+              </button>
+            </div>
         </div>
       </div>
-    </header>
+      </header>
+      <div data-mobile-menu-overlay class="fixed inset-0 z-40 bg-slate-900/50 backdrop-blur-sm hidden md:hidden"></div>
+      <nav id="mobile-nav" data-mobile-menu class="fixed inset-y-0 right-0 z-50 w-full max-w-xs bg-white dark:bg-background-dark shadow-xl transform transition-transform duration-200 ease-in-out translate-x-full pointer-events-none md:hidden" aria-hidden="true">
+        <div class="flex items-center justify-between px-6 py-4 border-b border-slate-200 dark:border-slate-800">
+          <span class="text-sm font-semibold text-slate-700 dark:text-slate-200">Menu</span>
+          <button type="button" class="p-2 rounded-full text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors" data-mobile-menu-close>
+            <span class="sr-only">Close navigation menu</span>
+            <span class="material-symbols-outlined">close</span>
+          </button>
+        </div>
+        <div class="px-6 py-4 space-y-1">
+          <a data-nav-target="homepage.html" class="block px-3 py-2 rounded-lg text-sm font-medium text-slate-700 dark:text-slate-300 hover:bg-primary/10 dark:hover:bg-primary/20 hover:text-primary dark:hover:text-primary transition-colors" href="homepage.html">Home</a>
+          <a data-nav-target="calender.html" class="block px-3 py-2 rounded-lg text-sm font-medium text-slate-700 dark:text-slate-300 hover:bg-primary/10 dark:hover:bg-primary/20 hover:text-primary dark:hover:text-primary transition-colors" href="calender.html">Trips</a>
+          <a data-nav-target="budget.html" class="block px-3 py-2 rounded-lg text-sm font-medium text-slate-700 dark:text-slate-300 hover:bg-primary/10 dark:hover:bg-primary/20 hover:text-primary dark:hover:text-primary transition-colors" href="budget.html">Budget</a>
+          <a data-nav-target="reminders.html" class="block px-3 py-2 rounded-lg text-sm font-medium text-slate-700 dark:text-slate-300 hover:bg-primary/10 dark:hover:bg-primary/20 hover:text-primary dark:hover:text-primary transition-colors" href="reminders.html">Reminders</a>
+          <a data-nav-target="packing.html" class="block px-3 py-2 rounded-lg text-sm font-medium text-slate-700 dark:text-slate-300 hover:bg-primary/10 dark:hover:bg-primary/20 hover:text-primary dark:hover:text-primary transition-colors" href="packing.html">Packing</a>
+          <button type="button" data-logout class="w-full text-left px-3 py-2 rounded-lg text-sm font-medium text-slate-700 dark:text-slate-300 hover:bg-primary/10 dark:hover:bg-primary/20 hover:text-primary dark:hover:text-primary transition-colors">Log&nbsp;Out</button>
+        </div>
+      </nav>
     <main class="flex-grow container mx-auto px-4 sm:px-6 lg:px-8 py-8">
       <div class="max-w-3xl mx-auto">
         <div class="mb-8">
