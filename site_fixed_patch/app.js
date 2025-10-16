@@ -3350,26 +3350,133 @@ function wireHeaderNav() {
     { selector: '#packing-nav',   fallback: 'packing.html' }
   ];
 
+  const toggleBtn = qs('[data-mobile-menu-toggle]');
+  const panel = qs('[data-mobile-menu]');
+  const overlay = qs('[data-mobile-menu-overlay]');
+  const closeBtn = qs('[data-mobile-menu-close]');
+  let lastFocus = null;
+
+  const getFocusable = () => panel
+    ? qsa('a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled])', panel)
+        .filter(el => el.offsetParent !== null)
+    : [];
+
+  const setMenuState = (open) => {
+    if (!panel) {
+      if (!open) {
+        document.body.classList.remove('overflow-hidden');
+      }
+      return;
+    }
+    if (open) {
+      panel.classList.remove('translate-x-full', 'pointer-events-none');
+      panel.classList.add('translate-x-0');
+      panel.setAttribute('aria-hidden', 'false');
+      if (overlay) {
+        overlay.classList.remove('hidden');
+        overlay.setAttribute('aria-hidden', 'false');
+      }
+      if (toggleBtn) {
+        toggleBtn.setAttribute('aria-expanded', 'true');
+      }
+      lastFocus = document.activeElement;
+      document.body.classList.add('overflow-hidden');
+      const focusables = getFocusable();
+      requestAnimationFrame(() => {
+        if (focusables.length > 0 && typeof focusables[0].focus === 'function') {
+          focusables[0].focus();
+        } else if (panel && typeof panel.focus === 'function') {
+          panel.focus();
+        }
+      });
+    } else {
+      panel.classList.add('translate-x-full');
+      panel.classList.remove('translate-x-0');
+      panel.classList.add('pointer-events-none');
+      panel.setAttribute('aria-hidden', 'true');
+      if (overlay) {
+        overlay.classList.add('hidden');
+        overlay.setAttribute('aria-hidden', 'true');
+      }
+      if (toggleBtn) {
+        toggleBtn.setAttribute('aria-expanded', 'false');
+      }
+      document.body.classList.remove('overflow-hidden');
+      const toFocus = lastFocus && typeof lastFocus.focus === 'function'
+        ? lastFocus
+        : toggleBtn;
+      if (toFocus && typeof toFocus.focus === 'function') {
+        toFocus.focus();
+      }
+    }
+  };
+
+  const isMenuOpen = () => Boolean(panel && panel.classList.contains('translate-x-0') && !panel.classList.contains('pointer-events-none'));
+
+  const openMenu = () => setMenuState(true);
+  const closeMenu = () => setMenuState(false);
+
+  on(toggleBtn, 'click', (ev) => {
+    ev.preventDefault();
+    if (isMenuOpen()) {
+      closeMenu();
+    } else {
+      openMenu();
+    }
+  });
+  on(overlay, 'click', closeMenu);
+  on(closeBtn, 'click', closeMenu);
+
+  if (panel) {
+    on(panel, 'keydown', (ev) => {
+      if (ev.key === 'Escape') {
+        ev.preventDefault();
+        closeMenu();
+        return;
+      }
+      if (ev.key !== 'Tab') return;
+      const focusables = getFocusable();
+      if (!focusables.length) return;
+      const first = focusables[0];
+      const last = focusables[focusables.length - 1];
+      if (ev.shiftKey && document.activeElement === first) {
+        ev.preventDefault();
+        last.focus();
+      } else if (!ev.shiftKey && document.activeElement === last) {
+        ev.preventDefault();
+        first.focus();
+      }
+    });
+  }
+
+  const handleNav = (ev, dest) => {
+    ev.preventDefault();
+    if (!dest) return;
+    if (dest.startsWith('#')) {
+      const target = qs(dest);
+      closeMenu();
+      if (target) {
+        target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
+      return;
+    }
+    closeMenu();
+    window.location.href = dest;
+  };
+
   navConfig.forEach(({ selector, fallback }) => {
     const link = qs(selector);
     if (!link) return;
     const dest = link.getAttribute('href') || fallback;
-    on(link, 'click', (ev) => {
-      ev.preventDefault();
-      if (!dest) return;
-      if (dest.startsWith('#')) {
-        // Allow templates to opt into smooth scrolling by pointing the href at
-        // an element ID.  This keeps behaviour declarative while preserving the
-        // default page navigation fallback.
-        const target = qs(dest);
-        if (target) {
-          target.scrollIntoView({ behavior: 'smooth', block: 'start' });
-        }
-        return;
-      }
-      window.location.href = dest;
-    });
+    on(link, 'click', (ev) => handleNav(ev, dest));
   });
+
+  qsa('[data-nav-target]').forEach((link) => {
+    const dest = link.dataset.navTarget || link.getAttribute('href') || '';
+    on(link, 'click', (ev) => handleNav(ev, dest));
+  });
+
+  return { closeMenu };
 }
 
 // ---------- Simple "test.html" exercise compat ----------
@@ -3414,8 +3521,11 @@ document.addEventListener("DOMContentLoaded", async () => {
   }
 
     // Global header nav if present
-    wireHeaderNav();
+    const navControls = wireHeaderNav() || {};
     addLogoutShortcut();
+    const closeMobileMenu = typeof navControls.closeMenu === 'function'
+      ? navControls.closeMenu
+      : () => {};
 
     // Personalize the welcome message on the home page.  The template
     // includes a span with the id "welcome-user" containing a placeholder
@@ -3430,14 +3540,17 @@ document.addEventListener("DOMContentLoaded", async () => {
     // templates include an anchor with the id "logout-button" that should
     // terminate the session and return the user to the login page. Without
     // this handler the link does nothing.
-    const logoutEl = qs('#logout-button');
-    on(logoutEl, 'click', (ev) => {
-      ev.preventDefault();
-      // Clear the session and redirect to the login page.  Ensure the href
-      // matches the lowercase filename on disk (logpage.html) to avoid 404s on
-      // case‑sensitive deployments.
-      store.remove(KEY_SESSION);
-      window.location.href = 'logpage.html';
+    const logoutButtons = [qs('#logout-button'), ...qsa('[data-logout]')].filter(Boolean);
+    logoutButtons.forEach((btn) => {
+      on(btn, 'click', (ev) => {
+        ev.preventDefault();
+        closeMobileMenu();
+        // Clear the session and redirect to the login page.  Ensure the href
+        // matches the lowercase filename on disk (logpage.html) to avoid 404s on
+        // case‑sensitive deployments.
+        store.remove(KEY_SESSION);
+        window.location.href = 'logpage.html';
+      });
     });
 
   // Initialise exchange rates so that budget pages display converted values.  We await

@@ -51,7 +51,7 @@
                     </svg>
                 </div>
                 <div class="flex items-center gap-4">
-                    <nav class="hidden lg:flex items-center gap-6">
+                    <nav class="hidden md:flex items-center gap-6">
                         <!-- Consistent navigation across the site -->
                         <a class="text-sm font-medium hover:text-primary" href="homepage.html">Home</a>
                         <a class="text-sm font-medium hover:text-primary" href="calender.html">Trips</a>
@@ -63,9 +63,31 @@
                     </nav>
                     <!-- User avatar and logout link -->
                     <!-- User avatar removed per user request -->
-                    <a id="logout-button" href="#" class="hidden lg:inline-block text-sm font-medium text-gray-700 dark:text-gray-300 hover:text-primary transition-colors">Log&nbsp;Out</a>
+                    <a id="logout-button" href="#" class="hidden md:inline-block text-sm font-medium text-gray-700 dark:text-gray-300 hover:text-primary transition-colors">Log&nbsp;Out</a>
+                    <button type="button" class="md:hidden w-10 h-10 flex items-center justify-center rounded-full text-gray-600 dark:text-gray-300 hover:bg-gray-200/60 dark:hover:bg-gray-800/60 transition-colors" data-mobile-menu-toggle aria-controls="mobile-nav" aria-expanded="false">
+                        <span class="sr-only">Open navigation menu</span>
+                        <span class="material-symbols-outlined">menu</span>
+                    </button>
                 </div>
             </header>
+            <div data-mobile-menu-overlay class="fixed inset-0 z-40 bg-gray-900/50 backdrop-blur-sm hidden md:hidden"></div>
+            <nav id="mobile-nav" data-mobile-menu class="fixed inset-y-0 right-0 z-50 w-full max-w-xs bg-white dark:bg-background-dark shadow-xl transform transition-transform duration-200 ease-in-out translate-x-full pointer-events-none md:hidden" aria-hidden="true">
+                <div class="flex items-center justify-between px-6 py-4 border-b border-gray-200 dark:border-gray-700">
+                    <span class="text-sm font-semibold text-gray-700 dark:text-gray-200">Menu</span>
+                    <button type="button" class="p-2 rounded-full text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors" data-mobile-menu-close>
+                        <span class="sr-only">Close navigation menu</span>
+                        <span class="material-symbols-outlined">close</span>
+                    </button>
+                </div>
+                <div class="px-6 py-4 space-y-1">
+                    <a data-nav-target="homepage.html" class="block px-3 py-2 rounded-lg text-sm font-medium text-gray-700 dark:text-gray-300 hover:bg-primary/10 dark:hover:bg-primary/20 hover:text-primary dark:hover:text-primary transition-colors" href="homepage.html">Home</a>
+                    <a data-nav-target="calender.html" class="block px-3 py-2 rounded-lg text-sm font-medium text-gray-700 dark:text-gray-300 hover:bg-primary/10 dark:hover:bg-primary/20 hover:text-primary dark:hover:text-primary transition-colors" href="calender.html">Trips</a>
+                    <a data-nav-target="budget.html" class="block px-3 py-2 rounded-lg text-sm font-medium text-gray-700 dark:text-gray-300 hover:bg-primary/10 dark:hover:bg-primary/20 hover:text-primary dark:hover:text-primary transition-colors" href="budget.html">Budget</a>
+                    <a data-nav-target="reminders.html" class="block px-3 py-2 rounded-lg text-sm font-medium text-gray-700 dark:text-gray-300 hover:bg-primary/10 dark:hover:bg-primary/20 hover:text-primary dark:hover:text-primary transition-colors" href="reminders.html">Reminders</a>
+                    <a data-nav-target="packing.html" class="block px-3 py-2 rounded-lg text-sm font-medium text-gray-700 dark:text-gray-300 hover:bg-primary/10 dark:hover:bg-primary/20 hover:text-primary dark:hover:text-primary transition-colors" href="packing.html">Packing</a>
+                    <button type="button" data-logout class="w-full text-left px-3 py-2 rounded-lg text-sm font-medium text-gray-700 dark:text-gray-300 hover:bg-primary/10 dark:hover:bg-primary/20 hover:text-primary dark:hover:text-primary transition-colors">Log&nbsp;Out</button>
+                </div>
+            </nav>
             <!-- Main content area -->
             <main class="flex flex-1 justify-center py-8 px-4 sm:px-6 lg:px-8">
                 <div class="w-full max-w-4xl space-y-8">
