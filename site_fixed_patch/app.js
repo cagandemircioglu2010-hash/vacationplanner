@@ -995,6 +995,28 @@ async function handleRegisterPage() {
   const passEl = qs("#register-password");
   const confirmEl = qs("#confirm-password");
   const loginLink = qs("#login-link");
+  const errorBox = qs("#register-error");
+
+  const setRegisterError = (msg = "") => {
+    if (!errorBox) return;
+    if (msg) {
+      errorBox.textContent = msg;
+      errorBox.classList.remove("hidden");
+    } else {
+      errorBox.textContent = "";
+      errorBox.classList.add("hidden");
+    }
+  };
+
+  const clearPasswordMismatch = () => {
+    if (confirmEl) {
+      confirmEl.setCustomValidity("");
+    }
+    setRegisterError("");
+  };
+
+  on(passEl, "input", clearPasswordMismatch);
+  on(confirmEl, "input", clearPasswordMismatch);
 
     on(loginLink, "click", (e) => {
     e.preventDefault();
@@ -1004,6 +1026,8 @@ async function handleRegisterPage() {
 
   on(form, "submit", async (e) => {
     e.preventDefault();
+    setRegisterError("");
+    if (confirmEl) confirmEl.setCustomValidity("");
     const name = nameEl?.value?.trim();
     const email = emailEl?.value?.toLowerCase().trim();
     const pass = passEl?.value || "";
@@ -1015,6 +1039,11 @@ async function handleRegisterPage() {
       return;
     }
     if (pass !== confirm) {
+      if (confirmEl) {
+        confirmEl.setCustomValidity("Passwords do not match");
+        confirmEl.reportValidity();
+      }
+      setRegisterError("Passwords do not match. Please re-enter them.");
       return;
     }
 
@@ -1030,17 +1059,18 @@ async function handleRegisterPage() {
 
     const passHash = await hash(pass);
     const newUser = { name, email, passHash, createdAt: nowISO() };
-    users.push(newUser);
-    store.set(KEY_USERS, users);
-    store.set(KEY_SESSION, { email }); // auto-login
     // Persist the new user to Supabase and wait for completion so that
     // subsequent trip/expense writes have a parent record available.
     try {
       await writeUserToSupabase(newUser);
     } catch (err) {
       console.error('Unable to persist user to Supabase:', err);
+      setRegisterError("We couldn't create your account right now. Please try again shortly.");
       return;
     }
+    users.push(newUser);
+    store.set(KEY_USERS, users);
+    store.set(KEY_SESSION, { email }); // auto-login
     // Directly redirect to the home page upon successful account creation.  A dedicated
     // notification area could be used to display a success message if desired.
     window.location.href = "homepage.html";
