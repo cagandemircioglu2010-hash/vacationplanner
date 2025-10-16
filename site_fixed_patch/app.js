@@ -290,6 +290,54 @@ async function writeUserToSupabase(user) {
     throw err;
   }
 }
+
+function normalizeUserFromSupabase(row) {
+  if (!row || typeof row !== 'object') return null;
+  const normalized = {
+    email: row.email || '',
+    name: row.name || '',
+    passHash: row.passHash ?? row.passhash ?? row.pass_hash ?? '',
+  };
+  const created = row.createdAt ?? row.created_at;
+  if (created) {
+    normalized.createdAt = created;
+  }
+  const updated = row.updatedAt ?? row.updated_at;
+  if (updated) {
+    normalized.updatedAt = updated;
+  }
+  if (!normalized.email || !normalized.passHash) {
+    return null;
+  }
+  return normalized;
+}
+
+async function readUserFromSupabase(email) {
+  const supabase = window.supabaseClient;
+  if (!supabase || !email) return null;
+  try {
+    const builder = supabase.from('users').select().eq('email', email);
+    let data = null;
+    let error = null;
+    if (typeof builder.maybeSingle === 'function') {
+      const response = await builder.maybeSingle();
+      data = response.data;
+      error = response.error;
+    } else {
+      const response = await builder.limit(1);
+      data = Array.isArray(response.data) ? response.data[0] : null;
+      error = response.error;
+    }
+    if (error) {
+      console.error('Error reading user from Supabase:', error);
+      return null;
+    }
+    return normalizeUserFromSupabase(data);
+  } catch (err) {
+    console.error('Error reading user from Supabase:', err);
+    return null;
+  }
+}
 async function readTripsFromSupabase(email) {
   /**
    * Retrieve all trips for a given user from Supabase.
@@ -1018,7 +1066,10 @@ async function handleRegisterPage() {
       return;
     }
 
-    const users = store.get(KEY_USERS, []);
+    let users = store.get(KEY_USERS, []);
+    if (!Array.isArray(users)) {
+      users = [];
+    }
     if (users.some(u => u.email === email)) {
       // Redirect existing users to the login page without showing a popup
       // Use lowercase filename on case‑sensitive hosts (e.g. Netlify).  The login page
@@ -1032,7 +1083,7 @@ async function handleRegisterPage() {
     const newUser = { name, email, passHash, createdAt: nowISO() };
     users.push(newUser);
     store.set(KEY_USERS, users);
-    store.set(KEY_SESSION, { email }); // auto-login
+    store.set(KEY_SESSION, { email, name }); // auto-login
     // Persist the new user to Supabase and wait for completion so that
     // subsequent trip/expense writes have a parent record available.
     try {
@@ -1069,20 +1120,33 @@ async function handleLoginPage() {
     const pass = passEl?.value || "";
     const passHash = await hash(pass);
 
-    const users = store.get(KEY_USERS, []);
-    const user = users.find(u => u.email === email && u.passHash === passHash);
+    let users = store.get(KEY_USERS, []);
+    if (!Array.isArray(users)) {
+      users = [];
+    }
+    let user = users.find(u => u.email === email && u.passHash === passHash);
+
+    if (!user) {
+      const remoteUser = await readUserFromSupabase(email);
+      if (remoteUser && remoteUser.passHash === passHash) {
+        user = remoteUser;
+        users = users.filter(u => u.email !== remoteUser.email);
+        users.push(remoteUser);
+        store.set(KEY_USERS, users);
+      }
+    }
 
     if (!user) {
       errorBox && errorBox.classList.remove("hidden");
       return;
     }
 
-    store.set(KEY_SESSION, { email });
+    store.set(KEY_SESSION, { email: user.email, name: user.name });
     if (rememberEl?.checked) {
       // Optionally set a flag for a "remembered" longer session. For demo, no-op.
     }
     // Synchronise trips and expenses from Supabase after login
-    await syncFromSupabase({ email });   // <-- add this line
+    await syncFromSupabase({ email: user.email });   // <-- add this line
     window.location.href = "homepage.html";
   });
 }
