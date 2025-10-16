@@ -58,29 +58,40 @@
                 <!-- Use lowercase filenames for navigation links. On Unix hosts the
                      filesystem is case-sensitive, so ensure the hrefs exactly match
                      the actual filenames. -->
-                <a id="calendar-nav" class="px-3 py-2 rounded-md text-sm font-medium text-slate-700 dark:text-slate-300 hover:bg-primary/10 dark:hover:bg-primary/20 hover:text-primary dark:hover:text-primary transition-colors" href="homepage.html">Home</a>
-                <a class="px-3 py-2 rounded-md text-sm font-medium text-slate-700 dark:text-slate-300 hover:bg-primary/10 dark:hover:bg-primary/20 hover:text-primary dark:hover:text-primary transition-colors" href="calender.html">Trips</a>
-                <a class="px-3 py-2 rounded-md text-sm font-medium text-slate-700 dark:text-slate-300 hover:bg-primary/10 dark:hover:bg-primary/20 hover:text-primary dark:hover:text-primary transition-colors" href="budget.html">Budget</a>
+                <a data-nav="home" data-nav-link data-nav-target="homepage.html" class="px-3 py-2 rounded-md text-sm font-medium text-slate-700 dark:text-slate-300 hover:bg-primary/10 dark:hover:bg-primary/20 hover:text-primary dark:hover:text-primary transition-colors" href="homepage.html">Home</a>
+                <a data-nav="trips" data-nav-link data-nav-target="calender.html" class="px-3 py-2 rounded-md text-sm font-medium text-slate-700 dark:text-slate-300 hover:bg-primary/10 dark:hover:bg-primary/20 hover:text-primary dark:hover:text-primary transition-colors" href="calender.html">Trips</a>
+                <a data-nav="budget" data-nav-link data-nav-target="budget.html" class="px-3 py-2 rounded-md text-sm font-medium text-slate-700 dark:text-slate-300 hover:bg-primary/10 dark:hover:bg-primary/20 hover:text-primary dark:hover:text-primary transition-colors" href="budget.html">Budget</a>
                 <!-- New link to the dedicated reminders page -->
-                <a id="reminders-nav" class="px-3 py-2 rounded-md text-sm font-medium text-slate-700 dark:text-slate-300 hover:bg-primary/10 dark:hover:bg-primary/20 hover:text-primary dark:hover:text-primary transition-colors" href="reminders.html">Reminders</a>
+                <a data-nav="reminders" data-nav-link data-nav-target="reminders.html" class="px-3 py-2 rounded-md text-sm font-medium text-slate-700 dark:text-slate-300 hover:bg-primary/10 dark:hover:bg-primary/20 hover:text-primary dark:hover:text-primary transition-colors" href="reminders.html">Reminders</a>
                 <!-- Link to packing list page -->
-                <a id="packing-nav" class="px-3 py-2 rounded-md text-sm font-medium text-slate-700 dark:text-slate-300 hover:bg-primary/10 dark:hover:bg-primary/20 hover:text-primary dark:hover:text-primary transition-colors" href="packing.html">Packing</a>
+                <a data-nav="packing" data-nav-link data-nav-target="packing.html" class="px-3 py-2 rounded-md text-sm font-medium text-slate-700 dark:text-slate-300 hover:bg-primary/10 dark:hover:bg-primary/20 hover:text-primary dark:hover:text-primary transition-colors" href="packing.html">Packing</a>
             </nav>
-<div class="flex items-center gap-4">
+            <div class="flex items-center gap-4">
 <!-- Notifications button removed.  Notifications and reminders are now accessible via the
      Reminders page. -->
                     <!-- User avatar with alt text for better accessibility -->
                     <!-- Logout link (user avatar removed per user request) -->
-                    <a id="logout-button" href="#" class="hidden md:inline-block text-sm font-medium text-slate-700 dark:text-slate-300 hover:text-primary transition-colors">Log&nbsp;Out</a>
-<button class="md:hidden w-10 h-10 flex items-center justify-center rounded-full text-slate-600 dark:text-slate-400 hover:bg-slate-200/50 dark:hover:bg-slate-800/50 transition-colors">
+                    <a id="logout-button" data-logout href="#" class="hidden md:inline-block text-sm font-medium text-slate-700 dark:text-slate-300 hover:text-primary transition-colors">Log&nbsp;Out</a>
+<button type="button" data-mobile-nav-toggle aria-controls="mobile-nav" aria-expanded="false" class="md:hidden w-10 h-10 flex items-center justify-center rounded-full text-slate-600 dark:text-slate-400 hover:bg-slate-200/50 dark:hover:bg-slate-800/50 transition-colors">
+<span class="sr-only">Toggle navigation</span>
 <span class="material-symbols-outlined">
                             menu
                            </span>
 </button>
-</div>
-</div>
-</div>
+            </div>
+        </div>
+    </div>
 </header>
+<div id="mobile-nav" data-mobile-nav-panel class="md:hidden hidden border-b border-slate-200 dark:border-slate-800 bg-white dark:bg-background-dark" aria-hidden="true">
+  <nav class="px-4 py-4 flex flex-col gap-2">
+    <a data-nav="home" data-nav-link data-nav-target="homepage.html" class="block rounded-md px-3 py-2 text-sm font-medium text-slate-700 dark:text-slate-300 hover:bg-primary/10 dark:hover:bg-primary/20 hover:text-primary dark:hover:text-primary transition-colors" href="homepage.html">Home</a>
+    <a data-nav="trips" data-nav-link data-nav-target="calender.html" class="block rounded-md px-3 py-2 text-sm font-medium text-slate-700 dark:text-slate-300 hover:bg-primary/10 dark:hover:bg-primary/20 hover:text-primary dark:hover:text-primary transition-colors" href="calender.html">Trips</a>
+    <a data-nav="budget" data-nav-link data-nav-target="budget.html" class="block rounded-md px-3 py-2 text-sm font-medium text-slate-700 dark:text-slate-300 hover:bg-primary/10 dark:hover:bg-primary/20 hover:text-primary dark:hover:text-primary transition-colors" href="budget.html">Budget</a>
+    <a data-nav="reminders" data-nav-link data-nav-target="reminders.html" class="block rounded-md px-3 py-2 text-sm font-medium text-slate-700 dark:text-slate-300 hover:bg-primary/10 dark:hover:bg-primary/20 hover:text-primary dark:hover:text-primary transition-colors" href="reminders.html">Reminders</a>
+    <a data-nav="packing" data-nav-link data-nav-target="packing.html" class="block rounded-md px-3 py-2 text-sm font-medium text-slate-700 dark:text-slate-300 hover:bg-primary/10 dark:hover:bg-primary/20 hover:text-primary dark:hover:text-primary transition-colors" href="packing.html">Packing</a>
+    <a data-logout href="#" class="mt-2 block rounded-md px-3 py-2 text-sm font-medium text-slate-700 dark:text-slate-300 hover:bg-primary/10 dark:hover:bg-primary/20 hover:text-primary dark:hover:text-primary transition-colors">Log&nbsp;Out</a>
+  </nav>
+</div>
 <main class="flex-grow container mx-auto px-4 sm:px-6 lg:px-8 py-8">
 <div class="max-w-4xl mx-auto">
 <div class="mb-8">

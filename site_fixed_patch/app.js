@@ -3343,32 +3343,115 @@ function wireHeaderNav() {
   // bindings through a shared configuration keeps the logic centralised and
   // avoids subtle bugs where one page overrides another's navigation target.
   const navConfig = [
-    { selector: '#calendar-nav',  fallback: 'calender.html' },
-    { selector: '#vacations-nav', fallback: 'homepage.html' },
-    { selector: '#budget-nav',    fallback: 'budget.html' },
-    { selector: '#reminders-nav', fallback: 'reminders.html' },
-    { selector: '#packing-nav',   fallback: 'packing.html' }
+    { selector: '[data-nav="home"]',      fallback: 'homepage.html' },
+    { selector: '[data-nav="trips"]',     fallback: 'calender.html' },
+    { selector: '[data-nav="budget"]',    fallback: 'budget.html' },
+    { selector: '[data-nav="reminders"]', fallback: 'reminders.html' },
+    { selector: '[data-nav="packing"]',   fallback: 'packing.html' }
   ];
 
+  const trackedLinks = [];
+
   navConfig.forEach(({ selector, fallback }) => {
-    const link = qs(selector);
-    if (!link) return;
-    const dest = link.getAttribute('href') || fallback;
-    on(link, 'click', (ev) => {
-      ev.preventDefault();
-      if (!dest) return;
-      if (dest.startsWith('#')) {
-        // Allow templates to opt into smooth scrolling by pointing the href at
-        // an element ID.  This keeps behaviour declarative while preserving the
-        // default page navigation fallback.
-        const target = qs(dest);
-        if (target) {
-          target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    qsa(selector).forEach((link) => {
+      const dest = link.getAttribute('href') || fallback;
+      bindEventOnce(link, 'click', (ev) => {
+        const targetHref = link.getAttribute('href') || fallback;
+        const destination = targetHref || fallback;
+        if (!destination) return;
+        ev.preventDefault();
+        if (destination.startsWith('#')) {
+          // Allow templates to opt into smooth scrolling by pointing the href at
+          // an element ID.  This keeps behaviour declarative while preserving the
+          // default page navigation fallback.
+          const target = qs(destination);
+          if (target) {
+            target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          }
+          return;
         }
-        return;
-      }
-      window.location.href = dest;
+        window.location.href = destination;
+      }, 'headerNav');
+
+      trackedLinks.push({ link, fallback, dest });
     });
+  });
+
+  // Highlight the active navigation destination for better orientation.
+  const currentPath = (() => {
+    const path = (window.location.pathname.split('/').pop() || '').toLowerCase();
+    if (!path || path === 'index.html') {
+      return 'homepage.html';
+    }
+    return path;
+  })();
+
+  trackedLinks.forEach(({ link, fallback }) => {
+    const explicitTarget = (link.dataset.navTarget || link.getAttribute('href') || fallback || '').split('#')[0];
+    if (!explicitTarget) return;
+    if (explicitTarget.toLowerCase() === currentPath) {
+      link.classList.add('text-primary', 'font-semibold');
+      link.setAttribute('aria-current', 'page');
+    } else {
+      link.classList.remove('text-primary', 'font-semibold');
+      link.removeAttribute('aria-current');
+    }
+  });
+
+  // Mobile navigation toggle support. Each header can declare a toggle button
+  // using the data-mobile-nav-toggle attribute and a corresponding panel marked
+  // with data-mobile-nav-panel. The panel remains hidden on larger screens but
+  // becomes a slide-down sheet on mobile devices.
+  qsa('[data-mobile-nav-toggle]').forEach((toggle, index) => {
+    const header = toggle.closest('header');
+    if (!header) return;
+    const panel = header.querySelector('[data-mobile-nav-panel]');
+    if (!panel) return;
+
+    const closePanel = () => {
+      panel.classList.add('hidden');
+      panel.setAttribute('aria-hidden', 'true');
+      toggle.setAttribute('aria-expanded', 'false');
+      header.classList.remove('mobile-nav-open');
+    };
+
+    const openPanel = () => {
+      panel.classList.remove('hidden');
+      panel.setAttribute('aria-hidden', 'false');
+      toggle.setAttribute('aria-expanded', 'true');
+      header.classList.add('mobile-nav-open');
+      const firstLink = panel.querySelector('a, button');
+      if (firstLink) {
+        firstLink.focus();
+      }
+    };
+
+    bindEventOnce(toggle, 'click', (ev) => {
+      ev.preventDefault();
+      const isOpen = toggle.getAttribute('aria-expanded') === 'true';
+      if (isOpen) {
+        closePanel();
+      } else {
+        openPanel();
+      }
+    }, `mobileNavToggle_${index}`);
+
+    qsa('a, button', panel).forEach((linkEl, linkIndex) => {
+      bindEventOnce(linkEl, 'click', () => {
+        // Close the panel once a navigation action is taken so the content is
+        // visible immediately after page load / section jump.
+        closePanel();
+      }, `mobileNavLink_${index}_${linkIndex}`);
+    });
+
+    bindEventOnce(window, 'resize', () => {
+      if (window.innerWidth >= 768) {
+        closePanel();
+      }
+    }, `mobileNavResize_${index}`);
+
+    // Keep panels hidden by default until a toggle is activated.
+    closePanel();
   });
 }
 
@@ -3430,14 +3513,17 @@ document.addEventListener("DOMContentLoaded", async () => {
     // templates include an anchor with the id "logout-button" that should
     // terminate the session and return the user to the login page. Without
     // this handler the link does nothing.
-    const logoutEl = qs('#logout-button');
-    on(logoutEl, 'click', (ev) => {
+    const handleLogout = (ev) => {
       ev.preventDefault();
       // Clear the session and redirect to the login page.  Ensure the href
       // matches the lowercase filename on disk (logpage.html) to avoid 404s on
       // case‑sensitive deployments.
       store.remove(KEY_SESSION);
       window.location.href = 'logpage.html';
+    };
+
+    qsa('[data-logout]').forEach((logoutEl, idx) => {
+      bindEventOnce(logoutEl, 'click', handleLogout, `logout_${idx}`);
     });
 
   // Initialise exchange rates so that budget pages display converted values.  We await
