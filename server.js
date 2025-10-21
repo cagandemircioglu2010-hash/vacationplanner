@@ -7,6 +7,8 @@ const net = require('net');
 const tls = require('tls');
 const { once } = require('events');
 
+const fetchFn = typeof globalThis.fetch === 'function' ? globalThis.fetch.bind(globalThis) : null;
+
 function loadEnvFromFile() {
   const envPath = path.join(__dirname, '.env');
   try {
@@ -281,6 +283,139 @@ function getEmailConfig() {
   return { host, port, secure, allowInsecure, user, pass, from, fromName };
 }
 
+function getSupabaseConfig() {
+  const url = (process.env.SUPABASE_URL || process.env.PUBLIC_SUPABASE_URL || '').trim();
+  const key = (process.env.SUPABASE_SERVICE_ROLE_KEY
+    || process.env.SUPABASE_SERVICE_KEY
+    || process.env.SUPABASE_SECRET_KEY
+    || process.env.SUPABASE_ANON_KEY
+    || '').trim();
+  if (!url || !key) {
+    return null;
+  }
+  try {
+    const parsed = new URL(url);
+    return { url: `${parsed.origin}${parsed.pathname.replace(/\/?$/, '')}`, key };
+  } catch (err) {
+    console.error('Invalid Supabase URL configuration:', err);
+    return null;
+  }
+}
+
+async function fetchResetTokenRecord(email, token) {
+  const config = getSupabaseConfig();
+  if (!config) {
+    const error = new Error('Supabase is not configured for password reset validation.');
+    error.code = 'SUPABASE_NOT_CONFIGURED';
+    throw error;
+  }
+
+  const params = new URLSearchParams({
+    select: 'email,token,expires_at',
+    email: `eq.${email}`,
+    token: `eq.${token}`,
+    limit: '1'
+  });
+
+  const endpoint = `${config.url}/rest/v1/reset_tokens?${params.toString()}`;
+  if (!fetchFn) {
+    const error = new Error('Global fetch API is not available in this environment.');
+    error.code = 'FETCH_NOT_AVAILABLE';
+    throw error;
+  }
+
+  const response = await fetchFn(endpoint, {
+    headers: {
+      apikey: config.key,
+      Authorization: `Bearer ${config.key}`,
+      Accept: 'application/json',
+      Prefer: 'return=representation'
+    }
+  });
+
+  if (!response.ok) {
+    const text = await response.text().catch(() => '');
+    const error = new Error(`Supabase token lookup failed with status ${response.status}: ${text}`);
+    error.code = 'SUPABASE_REQUEST_FAILED';
+    throw error;
+  }
+
+  let payload;
+  try {
+    payload = await response.json();
+  } catch (err) {
+    const error = new Error('Unable to parse Supabase token response.');
+    error.code = 'SUPABASE_RESPONSE_INVALID';
+    throw error;
+  }
+
+  if (!Array.isArray(payload) || payload.length === 0) {
+    return null;
+  }
+  return payload[0];
+}
+
+function getPreferredProto(req) {
+  const forwarded = (req.headers['x-forwarded-proto'] || '').split(',')[0].trim().toLowerCase();
+  if (forwarded === 'http' || forwarded === 'https') {
+    return forwarded;
+  }
+  return (req.socket?.encrypted || req.connection?.encrypted) ? 'https' : 'http';
+}
+
+function getPreferredHost(req) {
+  const forwarded = (req.headers['x-forwarded-host'] || '').split(',')[0].trim();
+  const host = forwarded || (req.headers.host || '').trim();
+  if (!host) {
+    return null;
+  }
+  const sanitized = host.replace(/[^A-Za-z0-9.:\[\]-]/g, '');
+  if (!sanitized) {
+    return null;
+  }
+  return sanitized;
+}
+
+function getResetLinkBase(req) {
+  const configured = (process.env.RESET_LINK_BASE_URL || process.env.PUBLIC_APP_ORIGIN || '').trim();
+  if (configured) {
+    try {
+      return new URL(configured).origin;
+    } catch (err) {
+      console.warn('Invalid RESET_LINK_BASE_URL/PUBLIC_APP_ORIGIN value. Falling back to request host.');
+    }
+  }
+  const host = getPreferredHost(req);
+  if (!host) {
+    return null;
+  }
+  const proto = getPreferredProto(req);
+  try {
+    return new URL(`${proto}://${host}`).origin;
+  } catch (err) {
+    console.error('Unable to construct reset link origin:', err);
+    return null;
+  }
+}
+
+function buildResetLink(req, email, token) {
+  const base = getResetLinkBase(req);
+  if (!base) {
+    return null;
+  }
+  const pathSetting = (process.env.RESET_LINK_PATH || '/logpage.html').trim();
+  const pathValue = pathSetting.startsWith('/') ? pathSetting : `/${pathSetting}`;
+  try {
+    const resetUrl = new URL(pathValue, `${base}/`);
+    resetUrl.searchParams.set('email', email);
+    resetUrl.searchParams.set('token', token);
+    return resetUrl.toString();
+  } catch (err) {
+    console.error('Unable to build password reset link:', err);
+    return null;
+  }
+}
+
 async function sendResetEmail(email, token, resetUrl) {
   const config = getEmailConfig();
   if (!config) {
@@ -291,7 +426,15 @@ async function sendResetEmail(email, token, resetUrl) {
   const fromHeader = config.fromName ? `${config.fromName} <${config.from}>` : config.from;
   const expiresAt = new Date(Date.now() + 30 * 60 * 1000);
   const formattedExpiry = expiresAt.toUTCString();
-  const safeResetUrl = typeof resetUrl === 'string' && /^https?:\/\//i.test(resetUrl) ? resetUrl : null;
+  let safeResetUrl = null;
+  if (typeof resetUrl === 'string') {
+    try {
+      const parsed = new URL(resetUrl);
+      if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
+        safeResetUrl = parsed.toString();
+      }
+    } catch {}
+  }
   const textBody = `You requested to reset your Vacation Planner password.\n\n` +
     `Your reset code is: ${token}\n\n` +
     `Enter this code within 30 minutes to choose a new password.${safeResetUrl ? `\n\nYou can also reset your password using this link: ${safeResetUrl}` : ''}\n\n` +
@@ -386,17 +529,42 @@ const server = http.createServer(async (req, res) => {
         sendJson(res, 400, { message: 'Invalid request body.' });
         return;
       }
-      const email = body?.email;
-      const token = body?.token;
-      const resetUrl = body?.resetUrl;
+      const email = typeof body?.email === 'string' ? body.email.trim().toLowerCase() : '';
+      const token = typeof body?.token === 'string' ? body.token.trim() : '';
       if (!email || !token) {
         sendJson(res, 400, { message: 'Email and token are required.' });
         return;
       }
       try {
-        await sendResetEmail(email, token, resetUrl);
+        const record = await fetchResetTokenRecord(email, token);
+        if (!record) {
+          sendJson(res, 400, { message: 'Reset token is invalid or does not exist.' });
+          return;
+        }
+        const expiresAtMs = record.expires_at ? Date.parse(record.expires_at) : NaN;
+        if (Number.isNaN(expiresAtMs) || expiresAtMs < Date.now()) {
+          sendJson(res, 400, { message: 'Reset token has expired. Please request a new one.' });
+          return;
+        }
+
+        const resetLink = buildResetLink(req, email, record.token || token);
+        await sendResetEmail(email, record.token || token, resetLink);
         sendJson(res, 200, { ok: true });
       } catch (err) {
+        if (err.code === 'SUPABASE_NOT_CONFIGURED') {
+          sendJson(res, 503, { message: err.message });
+          return;
+        }
+        if (err.code === 'FETCH_NOT_AVAILABLE') {
+          console.error('Fetch API not available for Supabase validation.');
+          sendJson(res, 500, { message: 'Unable to verify reset token.' });
+          return;
+        }
+        if (err.code === 'SUPABASE_REQUEST_FAILED' || err.code === 'SUPABASE_RESPONSE_INVALID') {
+          console.error('Unable to verify reset token:', err);
+          sendJson(res, 500, { message: 'Unable to verify reset token.' });
+          return;
+        }
         if (err.code === 'EMAIL_NOT_CONFIGURED') {
           sendJson(res, 503, { message: err.message });
         } else {
