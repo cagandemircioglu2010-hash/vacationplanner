@@ -135,18 +135,23 @@
             <label class="sr-only" for="reset-email">Email address</label>
             <input autocomplete="email" class="appearance-none rounded-lg relative block w-full px-3 py-3 border border-gray-300 dark:border-gray-700 placeholder-gray-500 dark:placeholder-gray-400 text-gray-900 dark:text-white bg-background-light dark:bg-background-dark focus:outline-none focus:ring-primary focus:border-primary focus:z-10 sm:text-sm" id="reset-email" name="reset-email" placeholder="Email address" required type="email" />
         </div>
-        <div>
-            <label class="sr-only" for="reset-password">New password</label>
-            <input autocomplete="new-password" class="appearance-none rounded-lg relative block w-full px-3 py-3 border border-gray-300 dark:border-gray-700 placeholder-gray-500 dark:placeholder-gray-400 text-gray-900 dark:text-white bg-background-light dark:bg-background-dark focus:outline-none focus:ring-primary focus:border-primary focus:z-10 sm:text-sm" id="reset-password" name="reset-password" placeholder="New password" required type="password" />
+        <div id="reset-token-group" class="hidden">
+            <label class="sr-only" for="reset-token">Reset code</label>
+            <input autocomplete="one-time-code" class="appearance-none rounded-lg relative block w-full px-3 py-3 border border-gray-300 dark:border-gray-700 placeholder-gray-500 dark:placeholder-gray-400 text-gray-900 dark:text-white bg-background-light dark:bg-background-dark focus:outline-none focus:ring-primary focus:border-primary focus:z-10 sm:text-sm" id="reset-token" name="reset-token" placeholder="Reset code" type="text" inputmode="text" />
+            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">Enter the reset code sent to your email.</p>
         </div>
-        <div>
+        <div id="reset-password-group" class="hidden">
+            <label class="sr-only" for="reset-password">New password</label>
+            <input autocomplete="new-password" class="appearance-none rounded-lg relative block w-full px-3 py-3 border border-gray-300 dark:border-gray-700 placeholder-gray-500 dark:placeholder-gray-400 text-gray-900 dark:text-white bg-background-light dark:bg-background-dark focus:outline-none focus:ring-primary focus:border-primary focus:z-10 sm:text-sm" id="reset-password" name="reset-password" placeholder="New password" type="password" />
+        </div>
+        <div id="reset-confirm-group" class="hidden">
             <label class="sr-only" for="reset-confirm">Confirm password</label>
-            <input autocomplete="new-password" class="appearance-none rounded-lg relative block w-full px-3 py-3 border border-gray-300 dark:border-gray-700 placeholder-gray-500 dark:placeholder-gray-400 text-gray-900 dark:text-white bg-background-light dark:bg-background-dark focus:outline-none focus:ring-primary focus:border-primary focus:z-10 sm:text-sm" id="reset-confirm" name="reset-confirm" placeholder="Confirm password" required type="password" />
+            <input autocomplete="new-password" class="appearance-none rounded-lg relative block w-full px-3 py-3 border border-gray-300 dark:border-gray-700 placeholder-gray-500 dark:placeholder-gray-400 text-gray-900 dark:text-white bg-background-light dark:bg-background-dark focus:outline-none focus:ring-primary focus:border-primary focus:z-10 sm:text-sm" id="reset-confirm" name="reset-confirm" placeholder="Confirm password" type="password" />
         </div>
     </div>
         <div>
             <button id="reset-button" class="group relative w-full flex justify-center py-3 px-4 border border-transparent text-sm font-medium rounded-lg text-white bg-primary hover:bg-primary/90 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary focus:ring-offset-background-light dark:focus:ring-offset-background-dark" type="submit">
-                Reset password
+                Send reset link
             </button>
         </div>
 </form>
@@ -155,6 +160,12 @@
                         Remembered your password?
                         <a id="back-to-login" class="font-medium text-primary hover:text-primary/80" href="#">
                         Return to sign in
+                    </a>
+                </p>
+<p class="mt-2">
+                        Already have a reset code?
+                        <a id="enter-reset-code" class="font-medium text-primary hover:text-primary/80" href="#">
+                        Enter it now
                     </a>
 </p>
 </div>
