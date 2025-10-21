@@ -290,6 +290,138 @@ async function writeUserToSupabase(user) {
     throw err;
   }
 }
+
+function normalizeUserFromSupabase(user) {
+  if (!user || typeof user !== 'object') return null;
+  const email = typeof user.email === 'string' ? user.email.toLowerCase() : '';
+  if (!email) return null;
+  const passHash =
+    user.passHash ??
+    user.passhash ??
+    user.pass_hash ??
+    user.password_hash ??
+    '';
+  if (!passHash) return null;
+  const normalized = {
+    email,
+    name: user.name || user.full_name || user.display_name || '',
+    passHash,
+    createdAt: user.createdAt || user.created_at || new Date().toISOString()
+  };
+  const updatedAt = user.passwordUpdatedAt || user.password_updated_at;
+  if (updatedAt) {
+    normalized.passwordUpdatedAt = updatedAt;
+  }
+  return normalized;
+}
+
+async function fetchUserFromSupabase(email) {
+  const supabase = window.supabaseClient;
+  if (!supabase || !email) return null;
+  try {
+    const { data, error, status } = await supabase
+      .from('users')
+      .select('*')
+      .eq('email', email)
+      .single();
+    if (error) {
+      if (status === 406) {
+        return null;
+      }
+      throw error;
+    }
+    return normalizeUserFromSupabase(data);
+  } catch (err) {
+    if (err && typeof err === 'object' && err.status === 406) {
+      return null;
+    }
+    console.error('Error fetching user from Supabase:', err);
+    return null;
+  }
+}
+
+function generateResetToken(byteLength = 16) {
+  const length = Number.isFinite(byteLength) && byteLength > 0 ? Math.floor(byteLength) : 16;
+  const bytes = new Uint8Array(Math.max(8, length));
+  if (window.crypto?.getRandomValues) {
+    window.crypto.getRandomValues(bytes);
+  } else {
+    for (let i = 0; i < bytes.length; i += 1) {
+      bytes[i] = Math.floor(Math.random() * 256);
+    }
+  }
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+async function createResetTokenForSupabase(email) {
+  const supabase = window.supabaseClient;
+  if (!supabase || !email) {
+    throw new Error('Supabase not initialised or email missing');
+  }
+  const token = generateResetToken();
+  const expiresAt = new Date(Date.now() + 1000 * 60 * 30).toISOString();
+  try {
+    await supabase.from('reset_tokens').delete().eq('email', email);
+    const { error } = await supabase
+      .from('reset_tokens')
+      .insert({ email, token, expires_at: expiresAt });
+    if (error) {
+      throw error;
+    }
+    return { token, expiresAt };
+  } catch (err) {
+    console.error('Error creating reset token in Supabase:', err);
+    throw err;
+  }
+}
+
+async function verifyResetTokenWithSupabase(email, token) {
+  const supabase = window.supabaseClient;
+  if (!supabase || !email || !token) {
+    return { valid: false, expired: false, record: null };
+  }
+  try {
+    const { data, error, status } = await supabase
+      .from('reset_tokens')
+      .select('*')
+      .match({ email, token })
+      .single();
+    if (error) {
+      if (status === 406) {
+        return { valid: false, expired: false, record: null };
+      }
+      throw error;
+    }
+    if (!data) {
+      return { valid: false, expired: false, record: null };
+    }
+    const expiresTime = data.expires_at ? new Date(data.expires_at).getTime() : null;
+    const expired = Number.isFinite(expiresTime) ? expiresTime < Date.now() : false;
+    return { valid: !expired, expired, record: data };
+  } catch (err) {
+    if (err && typeof err === 'object' && err.status === 406) {
+      return { valid: false, expired: false, record: null };
+    }
+    console.error('Error verifying reset token with Supabase:', err);
+    throw err;
+  }
+}
+
+async function consumeResetTokenInSupabase(email, token) {
+  const supabase = window.supabaseClient;
+  if (!supabase || !email || !token) return;
+  try {
+    const { error } = await supabase
+      .from('reset_tokens')
+      .delete()
+      .match({ email, token });
+    if (error) {
+      throw error;
+    }
+  } catch (err) {
+    console.error('Error removing reset token from Supabase:', err);
+  }
+}
 async function readTripsFromSupabase(email) {
   /**
    * Retrieve all trips for a given user from Supabase.
@@ -1093,15 +1225,22 @@ async function handleLoginPage() {
   const resetEmailEl = qs("#reset-email");
   const resetPassEl = qs("#reset-password");
   const resetConfirmEl = qs("#reset-confirm");
+  const resetTokenEl = qs("#reset-token");
+  const resetTokenGroup = qs("#reset-token-group");
+  const resetPasswordGroup = qs("#reset-password-group");
+  const resetConfirmGroup = qs("#reset-confirm-group");
   const resetErrorBox = qs("#reset-error");
   const resetErrorText = qs("#reset-error-text");
   const resetSuccessBox = qs("#reset-success");
   const resetSuccessText = qs("#reset-success-text");
   const backToLoginLink = qs("#back-to-login");
+  const resetSubmitBtn = qs("#reset-button");
+  const enterResetCodeLink = qs("#enter-reset-code");
 
   const defaultResetError = resetErrorText?.textContent || "";
   const defaultResetSuccess = resetSuccessText?.textContent || "";
   let resetRedirectTimer = null;
+  let resetMode = "request";
 
   const setResetError = (msg = "") => {
     if (!resetErrorBox) return;
@@ -1134,7 +1273,43 @@ async function handleLoginPage() {
     setResetSuccess("");
   };
 
-  const toggleResetView = (show) => {
+  const setResetMode = (mode = "request", options = {}) => {
+    const desired = mode === "update" ? "update" : "request";
+    resetMode = desired;
+    const isUpdate = desired === "update";
+    const toggle = (el, show) => {
+      if (!el) return;
+      el.classList[show ? "remove" : "add"]("hidden");
+    };
+    toggle(resetTokenGroup, isUpdate);
+    toggle(resetPasswordGroup, isUpdate);
+    toggle(resetConfirmGroup, isUpdate);
+    if (resetSubmitBtn) {
+      resetSubmitBtn.textContent = isUpdate ? "Reset password" : "Send reset link";
+    }
+    if (isUpdate) {
+      if (options.token && resetTokenEl) {
+        resetTokenEl.value = options.token;
+      }
+      if (options.focus === "token" && resetTokenEl) {
+        resetTokenEl.focus();
+      } else if (options.focus === "password" && resetPassEl) {
+        resetPassEl.focus();
+      }
+    } else {
+      if (!options.keepToken && resetTokenEl) {
+        resetTokenEl.value = "";
+      }
+      if (!options.keepPasswords) {
+        if (resetPassEl) resetPassEl.value = "";
+        if (resetConfirmEl) resetConfirmEl.value = "";
+      }
+    }
+  };
+
+  setResetMode("request");
+
+  const toggleResetView = (show, options = {}) => {
     if (resetRedirectTimer) {
       clearTimeout(resetRedirectTimer);
       resetRedirectTimer = null;
@@ -1144,22 +1319,36 @@ async function handleLoginPage() {
     if (show) {
       loginSection?.classList.add("hidden");
       resetSection?.classList.remove("hidden");
-      if (resetForm) {
-        resetForm.reset();
-      }
-      if (emailEl?.value && resetEmailEl) {
-        resetEmailEl.value = emailEl.value.trim();
-      }
+      const targetMode = options.mode || resetMode || "request";
+      setResetMode(targetMode, options);
       if (resetPassEl) {
         resetPassEl.setCustomValidity("");
       }
       if (resetConfirmEl) {
         resetConfirmEl.setCustomValidity("");
       }
-      resetEmailEl?.focus();
+      if (resetTokenEl) {
+        resetTokenEl.setCustomValidity("");
+      }
+      if (!options.keepEmail && emailEl?.value && resetEmailEl && targetMode === "request") {
+        resetEmailEl.value = emailEl.value.trim();
+      }
+      if (options.prefillEmail && resetEmailEl) {
+        resetEmailEl.value = options.prefillEmail;
+      }
+      if (targetMode === "update") {
+        if (options.focus === "password" && resetPassEl) {
+          resetPassEl.focus();
+        } else if (resetTokenEl) {
+          resetTokenEl.focus();
+        }
+      } else {
+        resetEmailEl?.focus();
+      }
     } else {
       loginSection?.classList.remove("hidden");
       resetSection?.classList.add("hidden");
+      setResetMode("request", { keepPasswords: false, keepToken: false });
       if (passEl) {
         passEl.value = "";
       }
@@ -1174,12 +1363,21 @@ async function handleLoginPage() {
 
   on(forgotLink, "click", (e) => {
     e.preventDefault();
-    toggleResetView(true);
+    toggleResetView(true, { mode: "request" });
   });
 
   on(backToLoginLink, "click", (e) => {
     e.preventDefault();
     toggleResetView(false);
+  });
+
+  on(enterResetCodeLink, "click", (e) => {
+    e.preventDefault();
+    if (resetSection?.classList.contains("hidden")) {
+      toggleResetView(true, { mode: "update", focus: "token", keepEmail: true });
+    } else {
+      setResetMode("update", { focus: "token" });
+    }
   });
 
   const clearResetValidation = () => {
@@ -1189,21 +1387,68 @@ async function handleLoginPage() {
     if (resetPassEl) {
       resetPassEl.setCustomValidity("");
     }
+    if (resetTokenEl) {
+      resetTokenEl.setCustomValidity("");
+    }
     setResetError("");
   };
 
   on(resetPassEl, "input", clearResetValidation);
   on(resetConfirmEl, "input", clearResetValidation);
+  on(resetTokenEl, "input", clearResetValidation);
 
   on(resetForm, "submit", async (e) => {
     e.preventDefault();
     hideResetMessages();
 
     const email = resetEmailEl?.value?.toLowerCase().trim();
+    if (!email) {
+      return;
+    }
+
+    if (resetMode === "request") {
+      const usersRaw = store.get(KEY_USERS, []);
+      const users = Array.isArray(usersRaw) ? usersRaw : [];
+      const localIdx = users.findIndex((u) => u.email === email);
+      let remoteUser = null;
+      if (localIdx === -1) {
+        remoteUser = await fetchUserFromSupabase(email);
+      }
+      if (localIdx === -1 && !remoteUser) {
+        setResetError("We couldn't find an account with that email. Please double-check and try again.");
+        return;
+      }
+      try {
+        const { token } = await createResetTokenForSupabase(email);
+        setResetSuccess(`Use this reset code within 30 minutes: ${token}. Enter it with your new password below.`);
+        setResetMode("update", { token, focus: "password" });
+        if (resetPassEl) resetPassEl.value = "";
+        if (resetConfirmEl) resetConfirmEl.value = "";
+      } catch (err) {
+        setResetError("We couldn't start the reset process right now. Please try again shortly.");
+      }
+      return;
+    }
+
+    const token = resetTokenEl?.value?.trim();
     const newPass = resetPassEl?.value || "";
     const confirmPass = resetConfirmEl?.value || "";
 
-    if (!email || !newPass) {
+    if (!token) {
+      if (resetTokenEl) {
+        resetTokenEl.setCustomValidity("Enter the reset code we sent to your email");
+        resetTokenEl.reportValidity();
+      }
+      setResetError("Please enter the reset code we sent to your email.");
+      return;
+    }
+
+    if (!newPass) {
+      if (resetPassEl) {
+        resetPassEl.setCustomValidity("Please choose a new password");
+        resetPassEl.reportValidity();
+      }
+      setResetError("Please choose a new password before continuing.");
       return;
     }
 
@@ -1216,20 +1461,45 @@ async function handleLoginPage() {
       return;
     }
 
-    const users = store.get(KEY_USERS, []);
-    const idx = Array.isArray(users) ? users.findIndex((u) => u.email === email) : -1;
-
-    if (idx === -1) {
-      setResetError("We couldn't find an account with that email. Please double-check and try again.");
+    const verification = await verifyResetTokenWithSupabase(email, token).catch((err) => {
+      console.error('Unable to verify reset token:', err);
+      setResetError("We couldn't verify your reset code. Please request a new one.");
+      return null;
+    });
+    if (!verification) {
+      return;
+    }
+    if (!verification.valid) {
+      if (verification.expired) {
+        setResetError("This reset code has expired. Please request a new one.");
+        await consumeResetTokenInSupabase(email, token);
+      } else {
+        setResetError("That reset code isn't valid. Please check it and try again.");
+      }
       return;
     }
 
-    const currentUser = users[idx];
+    const usersRaw = store.get(KEY_USERS, []);
+    const users = Array.isArray(usersRaw) ? usersRaw : [];
+    let idx = users.findIndex((u) => u.email === email);
+    if (idx === -1) {
+      const remoteUser = await fetchUserFromSupabase(email);
+      if (!remoteUser) {
+        setResetError("We couldn't find your account. Please request a new reset link.");
+        await consumeResetTokenInSupabase(email, token);
+        return;
+      }
+      users.push(remoteUser);
+      idx = users.length - 1;
+    }
+
+    const currentUser = users[idx] || { email };
     const passHash = await hash(newPass);
     const updatedUser = { ...currentUser, passHash, passwordUpdatedAt: nowISO() };
 
     try {
       await writeUserToSupabase(updatedUser);
+      await consumeResetTokenInSupabase(email, token);
     } catch (err) {
       console.error('Unable to update password in Supabase:', err);
       setResetError("We couldn't update your password right now. Please try again in a moment.");
@@ -1251,6 +1521,16 @@ async function handleLoginPage() {
     if (resetConfirmEl) {
       resetConfirmEl.value = "";
     }
+    if (resetTokenEl) {
+      resetTokenEl.value = "";
+    }
+
+    try {
+      const url = new URL(window.location.href);
+      url.searchParams.delete("token");
+      url.searchParams.delete("email");
+      window.history.replaceState({}, "", url.toString());
+    } catch {}
 
     setResetSuccess("Your password has been reset. Please sign in with your new password.");
     resetRedirectTimer = setTimeout(() => {
@@ -1258,6 +1538,33 @@ async function handleLoginPage() {
       resetRedirectTimer = null;
     }, 2500);
   });
+
+  const urlParams = new URLSearchParams(window.location.search || "");
+  const urlToken = urlParams.get("token");
+  const urlEmail = urlParams.get("email");
+  if (urlToken && urlEmail) {
+    toggleResetView(true, { mode: "update", token: urlToken, focus: "password", prefillEmail: urlEmail, keepEmail: true });
+    (async () => {
+      const verification = await verifyResetTokenWithSupabase(urlEmail.toLowerCase(), urlToken).catch((err) => {
+        console.error('Unable to verify reset token from URL:', err);
+        setResetError("We couldn't verify that reset link. Please request a new one.");
+        return null;
+      });
+      if (!verification) {
+        return;
+      }
+      if (!verification.valid) {
+        if (verification.expired) {
+          setResetError("This reset code has expired. Please request a new one.");
+          await consumeResetTokenInSupabase(urlEmail.toLowerCase(), urlToken);
+        } else {
+          setResetError("This reset code is not valid. Please request a new one.");
+        }
+        return;
+      }
+      setResetSuccess("Reset code verified. Choose a new password below.");
+    })();
+  }
 
   on(form, "submit", async (e) => {
     e.preventDefault();
