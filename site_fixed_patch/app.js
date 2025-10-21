@@ -375,6 +375,37 @@ async function createResetTokenForSupabase(email) {
   }
 }
 
+async function sendResetEmailRequest(email, token, options = {}) {
+  if (!email || !token) {
+    throw new Error('Email and token are required to send a reset email');
+  }
+  const payload = { email, token };
+  if (options.resetUrl) {
+    payload.resetUrl = options.resetUrl;
+  }
+  const endpoint = options.endpoint || '/api/reset/request';
+  try {
+    const response = await fetch(endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    if (!response.ok) {
+      let detail = '';
+      try {
+        const data = await response.json();
+        detail = data?.message || data?.error || '';
+      } catch {}
+      const error = new Error(detail || `Email request failed with status ${response.status}`);
+      error.status = response.status;
+      throw error;
+    }
+  } catch (err) {
+    console.error('Error sending reset email:', err);
+    throw err;
+  }
+}
+
 async function verifyResetTokenWithSupabase(email, token) {
   const supabase = window.supabaseClient;
   if (!supabase || !email || !token) {
@@ -1418,14 +1449,33 @@ async function handleLoginPage() {
         setResetError("We couldn't find an account with that email. Please double-check and try again.");
         return;
       }
+      let createdToken = "";
       try {
         const { token } = await createResetTokenForSupabase(email);
-        setResetSuccess(`Use this reset code within 30 minutes: ${token}. Enter it with your new password below.`);
-        setResetMode("update", { token, focus: "password" });
+        createdToken = token;
+        let resetUrl = null;
+        try {
+          const url = new URL(window.location.href);
+          url.searchParams.set('email', email);
+          url.searchParams.set('token', token);
+          resetUrl = url.toString();
+        } catch {}
+        await sendResetEmailRequest(email, token, { resetUrl });
+        setResetSuccess("We've emailed a reset code to you. Enter the code along with your new password below.");
+        setResetMode("update", { focus: "token" });
         if (resetPassEl) resetPassEl.value = "";
         if (resetConfirmEl) resetConfirmEl.value = "";
+        if (resetTokenEl) resetTokenEl.value = "";
       } catch (err) {
-        setResetError("We couldn't start the reset process right now. Please try again shortly.");
+        if (createdToken) {
+          await consumeResetTokenInSupabase(email, createdToken);
+        }
+        const errorMessage = typeof err?.message === 'string' ? err.message.toLowerCase() : '';
+        if (err && (err.status === 503 || errorMessage.includes('not configured'))) {
+          setResetError("Password reset email is currently unavailable. Please contact support or try again later.");
+        } else {
+          setResetError("We couldn't start the reset process right now. Please try again shortly.");
+        }
       }
       return;
     }

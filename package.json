@@ -1,0 +1,10 @@
+{
+  "name": "vacationplanner",
+  "version": "1.0.0",
+  "description": "Vacation Planner demo with password reset email support",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {}
+}
