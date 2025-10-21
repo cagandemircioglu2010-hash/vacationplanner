@@ -1086,10 +1086,177 @@ async function handleLoginPage() {
   const rememberEl = qs("#remember-me");
   const errorBox = qs("#error-message");
   const signupLink = qs("#signup-link");
+  const forgotLink = qs("#forgot-password-link");
+  const loginSection = qs("#login-section");
+  const resetSection = qs("#reset-section");
+  const resetForm = qs("#reset-form");
+  const resetEmailEl = qs("#reset-email");
+  const resetPassEl = qs("#reset-password");
+  const resetConfirmEl = qs("#reset-confirm");
+  const resetErrorBox = qs("#reset-error");
+  const resetErrorText = qs("#reset-error-text");
+  const resetSuccessBox = qs("#reset-success");
+  const resetSuccessText = qs("#reset-success-text");
+  const backToLoginLink = qs("#back-to-login");
 
-    on(signupLink, "click", (e) => {
+  const defaultResetError = resetErrorText?.textContent || "";
+  const defaultResetSuccess = resetSuccessText?.textContent || "";
+  let resetRedirectTimer = null;
+
+  const setResetError = (msg = "") => {
+    if (!resetErrorBox) return;
+    const text = msg || defaultResetError;
+    if (resetErrorText) {
+      resetErrorText.textContent = text;
+    }
+    if (msg) {
+      resetErrorBox.classList.remove("hidden");
+    } else {
+      resetErrorBox.classList.add("hidden");
+    }
+  };
+
+  const setResetSuccess = (msg = "") => {
+    if (!resetSuccessBox) return;
+    const text = msg || defaultResetSuccess;
+    if (resetSuccessText) {
+      resetSuccessText.textContent = text;
+    }
+    if (msg) {
+      resetSuccessBox.classList.remove("hidden");
+    } else {
+      resetSuccessBox.classList.add("hidden");
+    }
+  };
+
+  const hideResetMessages = () => {
+    setResetError("");
+    setResetSuccess("");
+  };
+
+  const toggleResetView = (show) => {
+    if (resetRedirectTimer) {
+      clearTimeout(resetRedirectTimer);
+      resetRedirectTimer = null;
+    }
+    hideResetMessages();
+    errorBox?.classList.add("hidden");
+    if (show) {
+      loginSection?.classList.add("hidden");
+      resetSection?.classList.remove("hidden");
+      if (resetForm) {
+        resetForm.reset();
+      }
+      if (emailEl?.value && resetEmailEl) {
+        resetEmailEl.value = emailEl.value.trim();
+      }
+      if (resetPassEl) {
+        resetPassEl.setCustomValidity("");
+      }
+      if (resetConfirmEl) {
+        resetConfirmEl.setCustomValidity("");
+      }
+      resetEmailEl?.focus();
+    } else {
+      loginSection?.classList.remove("hidden");
+      resetSection?.classList.add("hidden");
+      if (passEl) {
+        passEl.value = "";
+      }
+      emailEl?.focus();
+    }
+  };
+
+  on(signupLink, "click", (e) => {
     e.preventDefault();
     window.location.href = "signpage.html";
+  });
+
+  on(forgotLink, "click", (e) => {
+    e.preventDefault();
+    toggleResetView(true);
+  });
+
+  on(backToLoginLink, "click", (e) => {
+    e.preventDefault();
+    toggleResetView(false);
+  });
+
+  const clearResetValidation = () => {
+    if (resetConfirmEl) {
+      resetConfirmEl.setCustomValidity("");
+    }
+    if (resetPassEl) {
+      resetPassEl.setCustomValidity("");
+    }
+    setResetError("");
+  };
+
+  on(resetPassEl, "input", clearResetValidation);
+  on(resetConfirmEl, "input", clearResetValidation);
+
+  on(resetForm, "submit", async (e) => {
+    e.preventDefault();
+    hideResetMessages();
+
+    const email = resetEmailEl?.value?.toLowerCase().trim();
+    const newPass = resetPassEl?.value || "";
+    const confirmPass = resetConfirmEl?.value || "";
+
+    if (!email || !newPass) {
+      return;
+    }
+
+    if (newPass !== confirmPass) {
+      if (resetConfirmEl) {
+        resetConfirmEl.setCustomValidity("Passwords do not match");
+        resetConfirmEl.reportValidity();
+      }
+      setResetError("The passwords do not match. Please try again.");
+      return;
+    }
+
+    const users = store.get(KEY_USERS, []);
+    const idx = Array.isArray(users) ? users.findIndex((u) => u.email === email) : -1;
+
+    if (idx === -1) {
+      setResetError("We couldn't find an account with that email. Please double-check and try again.");
+      return;
+    }
+
+    const currentUser = users[idx];
+    const passHash = await hash(newPass);
+    const updatedUser = { ...currentUser, passHash, passwordUpdatedAt: nowISO() };
+
+    try {
+      await writeUserToSupabase(updatedUser);
+    } catch (err) {
+      console.error('Unable to update password in Supabase:', err);
+      setResetError("We couldn't update your password right now. Please try again in a moment.");
+      return;
+    }
+
+    users[idx] = updatedUser;
+    store.set(KEY_USERS, users);
+
+    if (emailEl) {
+      emailEl.value = email;
+    }
+    if (passEl) {
+      passEl.value = "";
+    }
+    if (resetPassEl) {
+      resetPassEl.value = "";
+    }
+    if (resetConfirmEl) {
+      resetConfirmEl.value = "";
+    }
+
+    setResetSuccess("Your password has been reset. Please sign in with your new password.");
+    resetRedirectTimer = setTimeout(() => {
+      toggleResetView(false);
+      resetRedirectTimer = null;
+    }, 2500);
   });
 
   on(form, "submit", async (e) => {
