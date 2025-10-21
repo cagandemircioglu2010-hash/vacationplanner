@@ -149,6 +149,9 @@ const store = {
 
 const KEY_USERS = "wl_users";                  // [{email, name, passHash}]
 const KEY_SESSION = "wl_session";              // {email}
+const KEY_RESET_TOKENS = "wl_reset_tokens";    // { [email]: { codeHash, expiresAt } }
+const RESET_TOKEN_TTL_MS = 10 * 60 * 1000;      // 10 minutes
+const RESET_CODE_RESEND_DELAY_MS = 30 * 1000;   // 30 seconds cooldown
 const tripsKey = (email) => `wl_trips_${email}`;        // [{...trip}]
 const expensesKey = (tripId) => `wl_exp_${tripId}`;     // [{...expense}]
 const expensesDirtyKey = (tripId) => `wl_exp_dirty_${tripId}`; // boolean dirty flag
@@ -961,6 +964,79 @@ function uid(prefix = "id") {
   return `${prefix}_${Math.random().toString(36).slice(2)}_${Date.now()}`;
 }
 
+function generateResetCode() {
+  return `${Math.floor(100000 + Math.random() * 900000)}`;
+}
+
+function getResetTokenMap() {
+  const raw = store.get(KEY_RESET_TOKENS, {});
+  return (raw && typeof raw === "object" && !Array.isArray(raw)) ? raw : {};
+}
+
+function readResetToken(email) {
+  if (!email) return null;
+  const map = getResetTokenMap();
+  const entry = map[email];
+  if (!entry) return null;
+  if (entry.expiresAt && Date.now() > entry.expiresAt) {
+    delete map[email];
+    store.set(KEY_RESET_TOKENS, map);
+    return null;
+  }
+  return entry;
+}
+
+function writeResetToken(email, token) {
+  if (!email) return;
+  const map = getResetTokenMap();
+  map[email] = token;
+  store.set(KEY_RESET_TOKENS, map);
+}
+
+function clearResetToken(email) {
+  if (!email) return;
+  const map = getResetTokenMap();
+  if (email in map) {
+    delete map[email];
+    store.set(KEY_RESET_TOKENS, map);
+  }
+}
+
+async function sendResetEmail(email, code) {
+  if (!email || !code) return false;
+  const supabase = window.supabaseClient;
+  const message = `Your Vacation Planner password reset code is ${code}. This code expires in 10 minutes.`;
+  const payload = {
+    email,
+    subject: "Vacation Planner password reset code",
+    message,
+    code,
+    resetUrl: `${window.location.origin}/logpage.html`
+  };
+
+  if (supabase?.functions?.invoke) {
+    try {
+      const { error } = await supabase.functions.invoke('send-reset-email', { body: payload });
+      if (!error) {
+        return true;
+      }
+      console.error('Supabase function send-reset-email returned an error:', error);
+    } catch (err) {
+      console.error('Unable to invoke Supabase function send-reset-email:', err);
+    }
+  }
+
+  try {
+    const mailto = `mailto:${encodeURIComponent(email)}?subject=${encodeURIComponent(payload.subject)}&body=${encodeURIComponent(message)}`;
+    window.open(mailto, '_blank', 'noopener');
+    return true;
+  } catch (err) {
+    console.error('Unable to open mail client for password reset email:', err);
+  }
+
+  return false;
+}
+
 // WebCrypto SHA-256 (best-effort); fallback to plain string if not available
 async function hash(text) {
   if (window.crypto?.subtle) {
@@ -1093,6 +1169,8 @@ async function handleLoginPage() {
   const resetEmailEl = qs("#reset-email");
   const resetPassEl = qs("#reset-password");
   const resetConfirmEl = qs("#reset-confirm");
+  const resetCodeEl = qs("#reset-code");
+  const sendResetCodeBtn = qs("#send-reset-code");
   const resetErrorBox = qs("#reset-error");
   const resetErrorText = qs("#reset-error-text");
   const resetSuccessBox = qs("#reset-success");
@@ -1102,6 +1180,7 @@ async function handleLoginPage() {
   const defaultResetError = resetErrorText?.textContent || "";
   const defaultResetSuccess = resetSuccessText?.textContent || "";
   let resetRedirectTimer = null;
+  let resetCodeCooldownTimer = null;
 
   const setResetError = (msg = "") => {
     if (!resetErrorBox) return;
@@ -1139,6 +1218,14 @@ async function handleLoginPage() {
       clearTimeout(resetRedirectTimer);
       resetRedirectTimer = null;
     }
+    if (resetCodeCooldownTimer) {
+      clearTimeout(resetCodeCooldownTimer);
+      resetCodeCooldownTimer = null;
+    }
+    if (sendResetCodeBtn) {
+      sendResetCodeBtn.disabled = false;
+      sendResetCodeBtn.classList.remove("opacity-50", "cursor-not-allowed");
+    }
     hideResetMessages();
     errorBox?.classList.add("hidden");
     if (show) {
@@ -1155,6 +1242,10 @@ async function handleLoginPage() {
       }
       if (resetConfirmEl) {
         resetConfirmEl.setCustomValidity("");
+      }
+      if (resetCodeEl) {
+        resetCodeEl.setCustomValidity("");
+        resetCodeEl.value = "";
       }
       resetEmailEl?.focus();
     } else {
@@ -1189,11 +1280,57 @@ async function handleLoginPage() {
     if (resetPassEl) {
       resetPassEl.setCustomValidity("");
     }
+    if (resetCodeEl) {
+      resetCodeEl.setCustomValidity("");
+    }
     setResetError("");
   };
 
   on(resetPassEl, "input", clearResetValidation);
   on(resetConfirmEl, "input", clearResetValidation);
+  on(resetCodeEl, "input", clearResetValidation);
+
+  const disableSendButtonTemporarily = () => {
+    if (!sendResetCodeBtn) return;
+    sendResetCodeBtn.disabled = true;
+    sendResetCodeBtn.classList.add("opacity-50", "cursor-not-allowed");
+    resetCodeCooldownTimer = setTimeout(() => {
+      if (!sendResetCodeBtn) return;
+      sendResetCodeBtn.disabled = false;
+      sendResetCodeBtn.classList.remove("opacity-50", "cursor-not-allowed");
+      resetCodeCooldownTimer = null;
+    }, RESET_CODE_RESEND_DELAY_MS);
+  };
+
+  on(sendResetCodeBtn, "click", async (e) => {
+    e.preventDefault();
+    hideResetMessages();
+    const email = resetEmailEl?.value?.toLowerCase().trim();
+    if (!email) {
+      setResetError("Please enter the email associated with your account first.");
+      resetEmailEl?.focus();
+      return;
+    }
+
+    const users = store.get(KEY_USERS, []);
+    if (!Array.isArray(users) || !users.some((u) => u.email === email)) {
+      setResetError("We couldn't find an account with that email. Please double-check and try again.");
+      return;
+    }
+
+    const code = generateResetCode();
+    const sent = await sendResetEmail(email, code);
+    if (!sent) {
+      setResetError("We couldn't send the verification email right now. Please try again in a few moments.");
+      return;
+    }
+
+    const codeHash = await hash(code);
+    writeResetToken(email, { codeHash, expiresAt: Date.now() + RESET_TOKEN_TTL_MS });
+    setResetSuccess("We've emailed you a 6-digit verification code. Enter it below to continue.");
+    disableSendButtonTemporarily();
+    resetCodeEl?.focus();
+  });
 
   on(resetForm, "submit", async (e) => {
     e.preventDefault();
@@ -1202,8 +1339,13 @@ async function handleLoginPage() {
     const email = resetEmailEl?.value?.toLowerCase().trim();
     const newPass = resetPassEl?.value || "";
     const confirmPass = resetConfirmEl?.value || "";
+    const resetCode = resetCodeEl?.value?.trim();
 
-    if (!email || !newPass) {
+    if (!email || !newPass || !resetCode) {
+      if (!resetCode) {
+        setResetError("Please enter the verification code we emailed to you.");
+        resetCodeEl?.focus();
+      }
       return;
     }
 
@@ -1213,6 +1355,31 @@ async function handleLoginPage() {
         resetConfirmEl.reportValidity();
       }
       setResetError("The passwords do not match. Please try again.");
+      return;
+    }
+
+    if (newPass.length < 8) {
+      if (resetPassEl) {
+        resetPassEl.setCustomValidity("Password must be at least 8 characters long");
+        resetPassEl.reportValidity();
+      }
+      setResetError("For your security, your password must be at least 8 characters long.");
+      return;
+    }
+
+    const storedToken = readResetToken(email);
+    if (!storedToken) {
+      setResetError("This verification code has expired or was never requested. Please send a new code.");
+      return;
+    }
+
+    const providedHash = await hash(resetCode);
+    if (storedToken.codeHash !== providedHash) {
+      if (resetCodeEl) {
+        resetCodeEl.setCustomValidity("Invalid verification code");
+        resetCodeEl.reportValidity();
+      }
+      setResetError("That verification code is incorrect. Please check the email we sent or request a new code.");
       return;
     }
 
@@ -1238,6 +1405,7 @@ async function handleLoginPage() {
 
     users[idx] = updatedUser;
     store.set(KEY_USERS, users);
+    clearResetToken(email);
 
     if (emailEl) {
       emailEl.value = email;
@@ -1250,6 +1418,9 @@ async function handleLoginPage() {
     }
     if (resetConfirmEl) {
       resetConfirmEl.value = "";
+    }
+    if (resetCodeEl) {
+      resetCodeEl.value = "";
     }
 
     setResetSuccess("Your password has been reset. Please sign in with your new password.");
