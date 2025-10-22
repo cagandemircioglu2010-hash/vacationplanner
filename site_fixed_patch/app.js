@@ -383,9 +383,25 @@ async function sendResetEmailRequest(email, token, options = {}) {
   if (options.resetUrl) {
     payload.resetUrl = options.resetUrl;
   }
-  const endpoint = options.endpoint || '/api/reset/request';
+  const defaultEndpoint = '/api/reset/request';
+  const origin = (window.location && window.location.origin)
+    ? window.location.origin
+    : `${window.location.protocol}//${window.location.host}`;
+  const endpointCandidate = typeof options.endpoint === 'string' && options.endpoint.trim()
+    ? options.endpoint.trim()
+    : defaultEndpoint;
+  let endpointUrl;
   try {
-    const response = await fetch(endpoint, {
+    endpointUrl = new URL(endpointCandidate, origin);
+  } catch (err) {
+    try {
+      endpointUrl = new URL(defaultEndpoint, origin);
+    } catch {
+      endpointUrl = defaultEndpoint;
+    }
+  }
+  try {
+    const response = await fetch(endpointUrl.toString(), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload)

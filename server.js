@@ -416,6 +416,21 @@ function buildResetLink(req, email, token) {
   }
 }
 
+function normalizeResetRequestPath(pathname) {
+  if (typeof pathname !== 'string') {
+    return '';
+  }
+  const suffix = '/api/reset/request';
+  const trimmed = pathname.replace(/\/+$/, '') || '/';
+  if (trimmed === suffix) {
+    return suffix;
+  }
+  if (trimmed.endsWith(suffix)) {
+    return suffix;
+  }
+  return trimmed;
+}
+
 async function sendResetEmail(email, token, resetUrl) {
   const config = getEmailConfig();
   if (!config) {
@@ -521,7 +536,8 @@ function serveStaticFile(res, filePath, method) {
 const server = http.createServer(async (req, res) => {
   try {
     const parsedUrl = new url.URL(req.url, `http://${req.headers.host || 'localhost'}`);
-    if (req.method === 'POST' && parsedUrl.pathname === '/api/reset/request') {
+    const normalizedResetPath = normalizeResetRequestPath(parsedUrl.pathname);
+    if (req.method === 'POST' && normalizedResetPath === '/api/reset/request') {
       let body;
       try {
         body = await readJsonBody(req);
