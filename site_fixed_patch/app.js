@@ -147,6 +147,100 @@ const store = {
   }
 };
 
+const sessionStore = {
+  get(key, fallback) {
+    try {
+      const raw = sessionStorage.getItem(key);
+      return raw ? JSON.parse(raw) : fallback;
+    } catch {
+      return fallback;
+    }
+  },
+  set(key, val) {
+    try {
+      sessionStorage.setItem(key, JSON.stringify(val));
+    } catch {}
+  },
+  remove(key) {
+    try {
+      sessionStorage.removeItem(key);
+    } catch {}
+  }
+};
+
+const RESET_FALLBACK_PREFIX = "wl_reset_fallback_code_";
+const RESET_FALLBACK_LAST_KEY = `${RESET_FALLBACK_PREFIX}__last`;
+const RESET_FALLBACK_TTL = 30 * 60 * 1000; // 30 minutes
+
+const resetFallbackKey = (email) => {
+  if (!email) return "";
+  return `${RESET_FALLBACK_PREFIX}${email}`;
+};
+
+function saveResetFallback(email, payload) {
+  const key = resetFallbackKey(email);
+  if (!key) return;
+  const data = {
+    token: payload?.token || "",
+    createdAt: Date.now(),
+    message: typeof payload?.message === 'string' ? payload.message : '',
+    notice: typeof payload?.notice === 'string' ? payload.notice : '',
+    email: email || ''
+  };
+  if (!data.token) {
+    sessionStore.remove(key);
+    const last = sessionStore.get(RESET_FALLBACK_LAST_KEY, null);
+    if (last?.email === email) {
+      sessionStore.remove(RESET_FALLBACK_LAST_KEY);
+    }
+    return;
+  }
+  sessionStore.set(key, data);
+  sessionStore.set(RESET_FALLBACK_LAST_KEY, { email: data.email, token: data.token, createdAt: data.createdAt });
+}
+
+function loadResetFallback(email) {
+  const key = resetFallbackKey(email);
+  if (!key) return null;
+  const data = sessionStore.get(key, null);
+  if (!data || typeof data.token !== 'string' || !data.token) {
+    return null;
+  }
+  const createdAt = Number(data.createdAt) || 0;
+  if (createdAt && Date.now() - createdAt > RESET_FALLBACK_TTL) {
+    sessionStore.remove(key);
+    const last = sessionStore.get(RESET_FALLBACK_LAST_KEY, null);
+    if (last?.email === email) {
+      sessionStore.remove(RESET_FALLBACK_LAST_KEY);
+    }
+    return null;
+  }
+  return { ...data, email };
+}
+
+function loadLastResetFallback() {
+  const data = sessionStore.get(RESET_FALLBACK_LAST_KEY, null);
+  if (!data || typeof data.email !== 'string' || !data.email) {
+    return null;
+  }
+  const record = loadResetFallback(data.email);
+  if (!record) {
+    sessionStore.remove(RESET_FALLBACK_LAST_KEY);
+    return null;
+  }
+  return record;
+}
+
+function clearResetFallback(email) {
+  const key = resetFallbackKey(email);
+  if (!key) return;
+  sessionStore.remove(key);
+  const last = sessionStore.get(RESET_FALLBACK_LAST_KEY, null);
+  if (last?.email === email) {
+    sessionStore.remove(RESET_FALLBACK_LAST_KEY);
+  }
+}
+
 const KEY_USERS = "wl_users";                  // [{email, name, passHash}]
 const KEY_SESSION = "wl_session";              // {email}
 const tripsKey = (email) => `wl_trips_${email}`;        // [{...trip}]
@@ -1280,14 +1374,125 @@ async function handleLoginPage() {
   const resetErrorText = qs("#reset-error-text");
   const resetSuccessBox = qs("#reset-success");
   const resetSuccessText = qs("#reset-success-text");
+  const resetFallbackBox = qs("#reset-fallback");
+  const resetFallbackCode = qs("#reset-fallback-code");
+  const resetFallbackCopy = qs("#reset-fallback-copy");
+  const resetFallbackNotice = qs("#reset-fallback-notice");
   const backToLoginLink = qs("#back-to-login");
   const resetSubmitBtn = qs("#reset-button");
   const enterResetCodeLink = qs("#enter-reset-code");
 
   const defaultResetError = resetErrorText?.textContent || "";
   const defaultResetSuccess = resetSuccessText?.textContent || "";
+  const defaultFallbackNotice = resetFallbackNotice?.textContent || "";
+  const defaultFallbackCopyText = resetFallbackCopy?.textContent || "Copy code";
   let resetRedirectTimer = null;
   let resetMode = "request";
+  const pendingFallback = loadLastResetFallback();
+
+  const hideResetFallback = () => {
+    if (resetFallbackBox) {
+      resetFallbackBox.classList.add("hidden");
+    }
+    if (resetFallbackCode) {
+      resetFallbackCode.textContent = "";
+    }
+    if (resetFallbackNotice) {
+      resetFallbackNotice.textContent = defaultFallbackNotice;
+    }
+    if (resetFallbackCopy) {
+      resetFallbackCopy.textContent = defaultFallbackCopyText;
+      resetFallbackCopy.disabled = false;
+    }
+  };
+
+  const showResetFallback = (email, token, options = {}) => {
+    if (!token) return;
+    if (resetFallbackCode) {
+      resetFallbackCode.textContent = token;
+    }
+    if (resetFallbackNotice) {
+      resetFallbackNotice.textContent = options.notice || defaultFallbackNotice;
+    }
+    if (resetFallbackBox) {
+      resetFallbackBox.classList.remove("hidden");
+    }
+    if (resetTokenEl && !options.keepToken) {
+      resetTokenEl.value = token;
+    }
+    const payload = {
+      token,
+      message: typeof options.message === "string" ? options.message : "",
+      notice: typeof options.notice === "string" ? options.notice : defaultFallbackNotice
+    };
+    saveResetFallback(email, payload);
+  };
+
+  const restoreResetFallback = (email) => {
+    const data = loadResetFallback(email);
+    if (!data) {
+      hideResetFallback();
+      return false;
+    }
+    if (resetFallbackCode) {
+      resetFallbackCode.textContent = data.token;
+    }
+    if (resetFallbackNotice) {
+      resetFallbackNotice.textContent = data.notice || defaultFallbackNotice;
+    }
+    if (resetFallbackBox) {
+      resetFallbackBox.classList.remove("hidden");
+    }
+    if (resetTokenEl && !resetTokenEl.value) {
+      resetTokenEl.value = data.token;
+    }
+    if (data.message) {
+      setResetSuccess(data.message);
+    }
+    return true;
+  };
+
+  const shouldUseResetFallback = (err) => {
+    if (!err) {
+      return true;
+    }
+    const status = Number(err.status);
+    const message = typeof err.message === "string" ? err.message.toLowerCase() : "";
+    if (!Number.isFinite(status)) {
+      if (message.includes("network") || message.includes("fetch") || message.includes("offline")) {
+        return true;
+      }
+    }
+    if (!status || status === 0) {
+      return true;
+    }
+    if (status >= 500 || status === 404 || status === 503) {
+      return true;
+    }
+    if (message.includes("not configured") || message.includes("unavailable")) {
+      return true;
+    }
+    return false;
+  };
+
+  const activateResetFallback = (email, token, err) => {
+    if (!token) {
+      return false;
+    }
+    const normalizedEmail = typeof email === "string" ? email.toLowerCase().trim() : "";
+    if (!shouldUseResetFallback(err)) {
+      return false;
+    }
+    if (resetEmailEl && normalizedEmail) {
+      resetEmailEl.value = normalizedEmail;
+    }
+    const message = "We couldn't email the reset code, but you can continue with the one shown below.";
+    const notice = "Copy this code (we've filled it in for you) and choose a new password.";
+    setResetSuccess(message);
+    setResetMode("update", { token, focus: "password", keepEmail: true });
+    showResetFallback(normalizedEmail, token, { message, notice });
+    return true;
+  };
 
   const setResetError = (msg = "") => {
     if (!resetErrorBox) return;
@@ -1344,6 +1549,7 @@ async function handleLoginPage() {
         resetPassEl.focus();
       }
     } else {
+      hideResetFallback();
       if (!options.keepToken && resetTokenEl) {
         resetTokenEl.value = "";
       }
@@ -1383,6 +1589,12 @@ async function handleLoginPage() {
       if (options.prefillEmail && resetEmailEl) {
         resetEmailEl.value = options.prefillEmail;
       }
+      const currentEmail = resetEmailEl?.value?.toLowerCase().trim();
+      if (targetMode === "update" && currentEmail) {
+        restoreResetFallback(currentEmail);
+      } else {
+        hideResetFallback();
+      }
       if (targetMode === "update") {
         if (options.focus === "password" && resetPassEl) {
           resetPassEl.focus();
@@ -1402,6 +1614,53 @@ async function handleLoginPage() {
       emailEl?.focus();
     }
   };
+
+  on(resetFallbackCopy, "click", async () => {
+    const code = resetFallbackCode?.textContent?.trim();
+    if (!code) {
+      return;
+    }
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(code);
+      } else {
+        throw new Error('Clipboard API unavailable');
+      }
+      if (resetFallbackCopy) {
+        resetFallbackCopy.textContent = "Copied!";
+        resetFallbackCopy.disabled = true;
+        window.setTimeout(() => {
+          if (resetFallbackCopy) {
+            resetFallbackCopy.textContent = defaultFallbackCopyText;
+            resetFallbackCopy.disabled = false;
+          }
+        }, 1500);
+      }
+    } catch (err) {
+      console.warn('Unable to copy reset code automatically:', err);
+      try {
+        const temp = document.createElement('textarea');
+        temp.value = code;
+        temp.setAttribute('readonly', '');
+        temp.style.position = 'absolute';
+        temp.style.left = '-9999px';
+        document.body.appendChild(temp);
+        temp.select();
+        document.execCommand?.('copy');
+        document.body.removeChild(temp);
+        if (resetFallbackCopy) {
+          resetFallbackCopy.textContent = "Copied!";
+          resetFallbackCopy.disabled = true;
+          window.setTimeout(() => {
+            if (resetFallbackCopy) {
+              resetFallbackCopy.textContent = defaultFallbackCopyText;
+              resetFallbackCopy.disabled = false;
+            }
+          }, 1500);
+        }
+      } catch {}
+    }
+  });
 
   on(signupLink, "click", (e) => {
     e.preventDefault();
@@ -1483,12 +1742,21 @@ async function handleLoginPage() {
         if (resetConfirmEl) resetConfirmEl.value = "";
         if (resetTokenEl) resetTokenEl.value = "";
       } catch (err) {
+        let fallbackUsed = false;
         if (createdToken) {
-          await consumeResetTokenInSupabase(email, createdToken);
+          fallbackUsed = activateResetFallback(email, createdToken, err);
+          if (!fallbackUsed) {
+            await consumeResetTokenInSupabase(email, createdToken);
+          }
+        }
+        if (fallbackUsed) {
+          return;
         }
         const errorMessage = typeof err?.message === 'string' ? err.message.toLowerCase() : '';
         if (err && (err.status === 503 || errorMessage.includes('not configured'))) {
           setResetError("Password reset email is currently unavailable. Please contact support or try again later.");
+        } else if (shouldUseResetFallback(err) && createdToken) {
+          setResetError("Password reset email is currently unavailable. Use the code shown above to continue.");
         } else {
           setResetError("We couldn't start the reset process right now. Please try again shortly.");
         }
@@ -1574,6 +1842,8 @@ async function handleLoginPage() {
 
     users[idx] = updatedUser;
     store.set(KEY_USERS, users);
+    clearResetFallback(email);
+    hideResetFallback();
 
     if (emailEl) {
       emailEl.value = email;
@@ -1630,6 +1900,17 @@ async function handleLoginPage() {
       }
       setResetSuccess("Reset code verified. Choose a new password below.");
     })();
+  } else if (pendingFallback?.email && pendingFallback?.token) {
+    toggleResetView(true, {
+      mode: "update",
+      token: pendingFallback.token,
+      focus: "password",
+      prefillEmail: pendingFallback.email,
+      keepEmail: true
+    });
+    if (!pendingFallback.message) {
+      setResetSuccess("We saved your reset code below. Enter it with your new password.");
+    }
   }
 
   on(form, "submit", async (e) => {
