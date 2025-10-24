@@ -127,6 +127,37 @@ const store = {
   }
 };
 
+const MS_PER_DAY = 1000 * 60 * 60 * 24;
+
+function toDateOnly(value) {
+  if (!value && value !== 0) return null;
+  if (typeof value === 'string') {
+    const match = value.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (match) {
+      const year = Number(match[1]);
+      const month = Number(match[2]) - 1;
+      const day = Number(match[3]);
+      if (!Number.isNaN(year) && !Number.isNaN(month) && !Number.isNaN(day)) {
+        return new Date(year, month, day);
+      }
+    }
+  }
+  const date = value instanceof Date ? new Date(value.getTime()) : new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return null;
+  }
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate());
+}
+
+function formatDateInput(date) {
+  const d = toDateOnly(date);
+  if (!d) return '';
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
 const KEY_USERS = "wl_users";                  // [{email, name, passHash}]
 const KEY_SESSION = "wl_session";              // {email}
 const tripsKey = (email) => `wl_trips_${email}`;        // [{...trip}]
@@ -2312,14 +2343,64 @@ function saveExpenses(tripId, rows) {
   }
 }
 
+function normalisePackingItems(items) {
+  const allowed = new Set(['essential', 'useful', 'optional']);
+  let mutated = false;
+  const list = Array.isArray(items) ? items : [];
+  const normalised = list.map((item) => {
+    const data = item && typeof item === 'object' ? { ...item } : {};
+    if (!data.id) {
+      data.id = uid('pack');
+      mutated = true;
+    }
+    if (typeof data.name !== 'string') {
+      data.name = 'Item';
+      mutated = true;
+    }
+    const importance = typeof data.importance === 'string' ? data.importance.toLowerCase() : '';
+    if (allowed.has(importance)) {
+      if (data.importance !== importance) {
+        data.importance = importance;
+        mutated = true;
+      }
+    } else {
+      if (importance !== 'useful') {
+        mutated = true;
+      }
+      data.importance = 'useful';
+    }
+    const urgent = Boolean(data.urgent);
+    if (data.urgent !== urgent) {
+      data.urgent = urgent;
+      mutated = true;
+    }
+    const packed = Boolean(data.packed);
+    if (data.packed !== packed) {
+      data.packed = packed;
+      mutated = true;
+    }
+    return data;
+  });
+  return { items: normalised, mutated };
+}
+
 function getPackingItems(tripId) {
   if (!tripId) return [];
-  return store.get(packingKey(tripId), []) || [];
+  const stored = store.get(packingKey(tripId), []) || [];
+  const { items, mutated } = normalisePackingItems(stored);
+  if (mutated) {
+    store.set(packingKey(tripId), items);
+    const sess = getSession();
+    if (sess && sess.email) {
+      writePackingToSupabase(sess.email, tripId, items);
+    }
+  }
+  return items;
 }
 
 function savePackingItems(tripId, items) {
   if (!tripId) return;
-  const list = Array.isArray(items) ? items : [];
+  const { items: list } = normalisePackingItems(items);
   store.set(packingKey(tripId), list);
   const sess = getSession();
   if (sess && sess.email) {
@@ -2343,6 +2424,10 @@ function wireBudgetPage(me) {
   // but always resolve to null so subsequent code does not operate on them.
   const remNameEl = null;
   const remDateEl = null;
+  const forecastEl = qs('#budget-forecast');
+  const forecastIconEl = qs('#budget-forecast-icon');
+  const forecastMessageEl = qs('#budget-forecast-message');
+  const forecastDetailEl = qs('#budget-forecast-detail');
 
   // Handle currency selection changes on the budget page.  When the user selects a
   // different currency, update the converter and refresh the table, chart and
@@ -2441,6 +2526,196 @@ function wireBudgetPage(me) {
       window.history.replaceState({}, '', newUrl);
     }
   };
+
+  const forecastStyles = {
+    danger: {
+      container: ['bg-red-50', 'border-red-200', 'dark:bg-red-900/40', 'dark:border-red-400/60'],
+      message: ['text-red-900', 'dark:text-red-100'],
+      detail: ['text-red-700', 'dark:text-red-200'],
+      icon: ['text-red-600', 'dark:text-red-200'],
+      iconName: 'warning',
+    },
+    warning: {
+      container: ['bg-amber-50', 'border-amber-200', 'dark:bg-amber-900/40', 'dark:border-amber-400/60'],
+      message: ['text-amber-900', 'dark:text-amber-100'],
+      detail: ['text-amber-700', 'dark:text-amber-200'],
+      icon: ['text-amber-600', 'dark:text-amber-200'],
+      iconName: 'error_circle',
+    },
+    safe: {
+      container: ['bg-emerald-50', 'border-emerald-200', 'dark:bg-emerald-900/40', 'dark:border-emerald-400/60'],
+      message: ['text-emerald-900', 'dark:text-emerald-100'],
+      detail: ['text-emerald-700', 'dark:text-emerald-200'],
+      icon: ['text-emerald-600', 'dark:text-emerald-200'],
+      iconName: 'task_alt',
+    },
+  };
+
+  const allForecastContainerClasses = Array.from(new Set(Object.values(forecastStyles).flatMap((style) => style.container || [])));
+  const allForecastMessageClasses = Array.from(new Set(Object.values(forecastStyles).flatMap((style) => style.message || [])));
+  const allForecastDetailClasses = Array.from(new Set(Object.values(forecastStyles).flatMap((style) => style.detail || [])));
+  const allForecastIconClasses = Array.from(new Set(Object.values(forecastStyles).flatMap((style) => style.icon || [])));
+
+  function computeBudgetForecast(trip, totalSpent, totalBudget) {
+    if (!trip || !trip.startDate || !trip.endDate) {
+      return null;
+    }
+    const start = toDateOnly(trip.startDate);
+    const end = toDateOnly(trip.endDate);
+    const today = toDateOnly(new Date());
+    if (!start || !end || !today || end < start) {
+      return null;
+    }
+
+    const totalDays = Math.max(1, Math.round((end - start) / MS_PER_DAY) + 1);
+    let daysElapsed;
+    let daysRemaining;
+    if (today < start) {
+      daysElapsed = 0;
+      daysRemaining = totalDays;
+    } else if (today > end) {
+      daysElapsed = totalDays;
+      daysRemaining = 0;
+    } else {
+      daysElapsed = Math.floor((today - start) / MS_PER_DAY) + 1;
+      daysRemaining = Math.max(0, Math.round((end - today) / MS_PER_DAY));
+    }
+
+    const validBudget = Number.isFinite(totalBudget) && totalBudget > 0;
+    if (!validBudget) {
+      const detailParts = [
+        `Days left: ${daysRemaining}`,
+        `Budget: ${fmtMoney(totalBudget || 0)}`,
+      ];
+      return {
+        severity: 'warning',
+        message: 'Set a budget to enable spending forecasts.',
+        detail: detailParts.join(' • '),
+      };
+    }
+
+    const dailyRate = daysElapsed > 0 ? totalSpent / daysElapsed : 0;
+    const projectedTotal = totalSpent + dailyRate * daysRemaining;
+    const projectedRemaining = totalBudget - projectedTotal;
+    const baselineParts = [
+      daysElapsed === 0
+        ? `Daily allowance: ${fmtMoney(totalBudget / totalDays)}`
+        : `Daily spend: ${fmtMoney(dailyRate)}`,
+      `Days left: ${daysRemaining}`,
+      `Budget: ${fmtMoney(totalBudget)}`,
+    ];
+
+    if (totalSpent > totalBudget) {
+      const overAmount = totalSpent - totalBudget;
+      return {
+        severity: 'danger',
+        message: `You've exceeded your budget by ${fmtMoney(overAmount)}.`,
+        detail: [...baselineParts, `Over by: ${fmtMoney(overAmount)}`].join(' • '),
+      };
+    }
+
+    if (daysRemaining === 0) {
+      if (projectedRemaining >= 0) {
+        return {
+          severity: 'safe',
+          message: `Trip complete with ${fmtMoney(projectedRemaining)} left in your budget.`,
+          detail: [...baselineParts, `Remaining: ${fmtMoney(projectedRemaining)}`].join(' • '),
+        };
+      }
+      const over = Math.abs(projectedRemaining);
+      return {
+        severity: 'danger',
+        message: `Trip complete but over budget by ${fmtMoney(over)}.`,
+        detail: [...baselineParts, `Over by: ${fmtMoney(over)}`].join(' • '),
+      };
+    }
+
+    const projectedShortfall = projectedTotal - totalBudget;
+    if (projectedShortfall > 0.5 && dailyRate > 0) {
+      const budgetRemaining = Math.max(0, totalBudget - totalSpent);
+      const daysUntilEmpty = Math.max(0, Math.ceil(budgetRemaining / dailyRate));
+      let whenText = 'before the trip ends';
+      if (daysUntilEmpty === 0) {
+        whenText = 'within the next day';
+      } else if (daysUntilEmpty === 1) {
+        whenText = 'in about 1 day';
+      } else {
+        whenText = `in about ${daysUntilEmpty} days`;
+      }
+      return {
+        severity: 'danger',
+        message: `At your current spending rate you'll run out of money ${whenText}.`,
+        detail: [...baselineParts, `Projected shortfall: ${fmtMoney(projectedShortfall)}`].join(' • '),
+      };
+    }
+
+    if (daysElapsed === 0) {
+      const allowance = totalBudget / totalDays;
+      return {
+        severity: 'safe',
+        message: `Your trip hasn't started yet. Aim for ${fmtMoney(allowance)} per day to stay on budget.`,
+        detail: [
+          `Daily allowance: ${fmtMoney(allowance)}`,
+          `Days left: ${daysRemaining}`,
+          `Budget: ${fmtMoney(totalBudget)}`,
+          `Projected remaining: ${fmtMoney(projectedRemaining)}`,
+        ].join(' • '),
+      };
+    }
+
+    if (projectedRemaining < -0.5) {
+      return {
+        severity: 'danger',
+        message: `You're on track to exceed your budget by ${fmtMoney(Math.abs(projectedRemaining))}.`,
+        detail: [...baselineParts, `Projected shortfall: ${fmtMoney(Math.abs(projectedRemaining))}`].join(' • '),
+      };
+    }
+
+    const projectedBalance = projectedRemaining < 0 ? 0 : projectedRemaining;
+    return {
+      severity: 'safe',
+      message: `You're on track to finish with ${fmtMoney(projectedBalance)} remaining.`,
+      detail: [...baselineParts, `Projected remaining: ${fmtMoney(projectedBalance)}`].join(' • '),
+    };
+  }
+
+  function updateBudgetForecast(totalSpent, totalBudget) {
+    if (!forecastEl || !forecastMessageEl || !forecastDetailEl || !forecastIconEl) {
+      return;
+    }
+    if (!activeTrip || !activeTrip.id) {
+      forecastEl.classList.add('hidden');
+      return;
+    }
+    const forecast = computeBudgetForecast(activeTrip, totalSpent, totalBudget);
+    if (!forecast) {
+      forecastEl.classList.add('hidden');
+      return;
+    }
+
+    const style = forecastStyles[forecast.severity] || forecastStyles.safe;
+    forecastEl.classList.remove('hidden');
+
+    allForecastContainerClasses.forEach((cls) => forecastEl.classList.remove(cls));
+    allForecastMessageClasses.forEach((cls) => forecastMessageEl.classList.remove(cls));
+    allForecastDetailClasses.forEach((cls) => forecastDetailEl.classList.remove(cls));
+    allForecastIconClasses.forEach((cls) => forecastIconEl.classList.remove(cls));
+
+    if (style.container) forecastEl.classList.add(...style.container);
+    if (style.message) forecastMessageEl.classList.add(...style.message);
+    if (style.detail) forecastDetailEl.classList.add(...style.detail);
+    if (style.icon) forecastIconEl.classList.add(...style.icon);
+
+    forecastIconEl.textContent = style.iconName || 'trending_up';
+    forecastMessageEl.textContent = forecast.message || '';
+    if (forecast.detail) {
+      forecastDetailEl.textContent = forecast.detail;
+      forecastDetailEl.classList.remove('hidden');
+    } else {
+      forecastDetailEl.textContent = '';
+      forecastDetailEl.classList.add('hidden');
+    }
+  }
 
   // Populate the trip selector with all trips and remember the user's choice so
   // the selection persists between visits to the budget and reminders pages.
@@ -2875,6 +3150,7 @@ function wireBudgetPage(me) {
       });
       const bar = qs('#budget-usage-bar');
       if (bar) bar.style.width = '0%';
+      updateBudgetForecast(0, 0);
       updateExpensesChart();
       updateTopCategories();
       return;
@@ -2917,6 +3193,8 @@ function wireBudgetPage(me) {
     // Update the budget usage bar
     const bar = qs('#budget-usage-bar');
     if (bar) bar.style.width = `${pct}%`;
+
+    updateBudgetForecast(totalSpent, totalBudget);
 
     // After updating the table and summary values, redraw the expenses chart.  This
     // ensures the visualisation stays in sync with the underlying data.  The
@@ -3628,6 +3906,16 @@ function wireRemindersPage(me) {
   const addBtn    = qs('#rem-add-btn');
   if (!tripSelect || !listEl) return; // not on reminders page
   const trips = getTrips(me.email) || [];
+  const suggestionsSection = qs('#reminder-suggestions');
+  const suggestionsListEl = qs('#reminder-suggestions-list');
+  const suggestionsEmptyEl = qs('#reminder-suggestions-empty');
+  const suggestionsAddAllBtn = qs('#reminder-add-all');
+
+  const suggestionRules = [
+    { offsetDays: 7, name: 'Check passport', description: '7 days before departure' },
+    { offsetDays: 2, name: 'Pack luggage', description: '48 hours before departure' },
+    { offsetDays: 0, name: 'Leave for airport', description: 'Departure day' },
+  ];
 
   const syncTripQuery = (tripId) => {
     const url = new URL(window.location.href);
@@ -3642,6 +3930,129 @@ function wireRemindersPage(me) {
       window.history.replaceState({}, '', newUrl);
     }
   };
+
+  const getTripById = (tripId) => trips.find(t => t.id === tripId);
+
+  function buildSuggestionCandidates(trip) {
+    if (!trip || !trip.id || !trip.startDate) {
+      return [];
+    }
+    const start = toDateOnly(trip.startDate);
+    if (!start) {
+      return [];
+    }
+    const today = toDateOnly(new Date());
+    const allRems = store.get(remindersKey(me.email), []) || [];
+    const existing = new Set(
+      allRems
+        .filter(r => r.tripId === trip.id)
+        .map(r => `${r.name}|${r.date}`)
+    );
+    const suggestions = suggestionRules.map((rule) => {
+      const target = new Date(start.getTime() - (rule.offsetDays || 0) * MS_PER_DAY);
+      return {
+        name: rule.name,
+        date: formatDateInput(target),
+        description: rule.description,
+        offsetDays: rule.offsetDays,
+      };
+    }).filter((s) => {
+      if (!s.date) return false;
+      const suggestionDate = toDateOnly(s.date);
+      if (today && suggestionDate && suggestionDate < today) {
+        return false;
+      }
+      const key = `${s.name}|${s.date}`;
+      if (existing.has(key)) {
+        return false;
+      }
+      return true;
+    });
+    return mergeSort(suggestions, (a, b) => new Date(a.date) - new Date(b.date));
+  }
+
+  function addReminderFromSuggestion(suggestion) {
+    const tripId = tripSelect.value;
+    if (!tripId || !suggestion) {
+      return;
+    }
+    const allRems = store.get(remindersKey(me.email), []) || [];
+    const key = `${suggestion.name}|${suggestion.date}`;
+    const exists = allRems.some(r => r.tripId === tripId && `${r.name}|${r.date}` === key);
+    if (exists) {
+      return;
+    }
+    const updated = [...allRems, { id: uid('rem'), tripId, name: suggestion.name, date: suggestion.date }];
+    store.set(remindersKey(me.email), updated);
+    writeRemindersToSupabase(me.email, updated);
+    renderList();
+  }
+
+  function renderSuggestions() {
+    if (!suggestionsSection || !suggestionsListEl) {
+      return;
+    }
+    const tripId = tripSelect.value;
+    const trip = getTripById(tripId);
+    if (!trip) {
+      suggestionsSection.classList.add('hidden');
+      return;
+    }
+
+    const suggestions = buildSuggestionCandidates(trip);
+    suggestionsSection.classList.remove('hidden');
+    suggestionsListEl.innerHTML = '';
+    const hasSuggestions = suggestions.length > 0;
+
+    if (suggestionsEmptyEl) {
+      if (hasSuggestions) {
+        suggestionsEmptyEl.textContent = '';
+        suggestionsEmptyEl.classList.add('hidden');
+      } else {
+        suggestionsEmptyEl.textContent = 'No smart suggestions right now. We\'ll surface new tasks as your departure approaches.';
+        suggestionsEmptyEl.classList.remove('hidden');
+      }
+    }
+
+    if (suggestionsAddAllBtn) {
+      suggestionsAddAllBtn.classList.toggle('hidden', !hasSuggestions);
+      suggestionsAddAllBtn.disabled = !hasSuggestions;
+      suggestionsAddAllBtn.classList.toggle('opacity-50', !hasSuggestions);
+      suggestionsAddAllBtn.classList.toggle('cursor-not-allowed', !hasSuggestions);
+    }
+
+    if (!hasSuggestions) {
+      return;
+    }
+
+    suggestions.forEach((suggestion) => {
+      const li = document.createElement('li');
+      li.className = 'flex items-center justify-between gap-3 rounded-lg bg-blue-50 dark:bg-slate-800/60 px-4 py-3';
+
+      const textWrap = document.createElement('div');
+      const title = document.createElement('p');
+      title.className = 'font-medium text-blue-900 dark:text-blue-100';
+      title.textContent = suggestion.name;
+      const detail = document.createElement('p');
+      detail.className = 'text-sm text-blue-800/80 dark:text-blue-200/80';
+      detail.textContent = `${suggestion.description} • ${suggestion.date}`;
+      textWrap.appendChild(title);
+      textWrap.appendChild(detail);
+
+      const addButton = document.createElement('button');
+      addButton.type = 'button';
+      addButton.className = 'text-sm font-semibold text-primary hover:text-primary/80';
+      addButton.textContent = 'Add';
+      addButton.addEventListener('click', (ev) => {
+        ev.preventDefault();
+        addReminderFromSuggestion(suggestion);
+      });
+
+      li.appendChild(textWrap);
+      li.appendChild(addButton);
+      suggestionsListEl.appendChild(li);
+    });
+  }
 
   const candidateId = new URLSearchParams(window.location.search).get('trip') || getStoredTripSelection(me.email);
   const selectedId = populateTripSelectElement(tripSelect, trips, candidateId);
@@ -3668,6 +4079,7 @@ function wireRemindersPage(me) {
       msg.className = 'text-sm text-gray-600 dark:text-gray-400';
       msg.textContent = trips.length > 0 ? 'Select a trip to view reminders.' : 'Create a trip to add reminders.';
       listEl.appendChild(msg);
+      renderSuggestions();
       return;
     }
     const allRems = store.get(remindersKey(me.email), []) || [];
@@ -3679,6 +4091,7 @@ function wireRemindersPage(me) {
       msg.className = 'text-sm text-gray-600 dark:text-gray-400';
       msg.textContent = 'No reminders yet.';
       listEl.appendChild(msg);
+      renderSuggestions();
       return;
     }
     sortedRems.forEach(r => {
@@ -3710,6 +4123,7 @@ function wireRemindersPage(me) {
       li.appendChild(delBtn);
       listEl.appendChild(li);
     });
+    renderSuggestions();
   }
   // When trip selection changes, refresh the reminders list and persist the choice
   const handleTripSelectChange = () => {
@@ -3720,6 +4134,43 @@ function wireRemindersPage(me) {
     renderList();
   };
   bindEventOnce(tripSelect, 'change', handleTripSelectChange, 'reminders-trip');
+  if (suggestionsAddAllBtn) {
+    const handleAddAllSuggestions = (ev) => {
+      ev.preventDefault();
+      const tripId = tripSelect.value;
+      const trip = getTripById(tripId);
+      if (!trip) {
+        return;
+      }
+      const suggestions = buildSuggestionCandidates(trip);
+      if (!suggestions.length) {
+        return;
+      }
+      const allRems = store.get(remindersKey(me.email), []) || [];
+      const existing = new Set(
+        allRems
+          .filter(r => r.tripId === tripId)
+          .map(r => `${r.name}|${r.date}`)
+      );
+      let mutated = false;
+      const updated = [...allRems];
+      suggestions.forEach((suggestion) => {
+        const key = `${suggestion.name}|${suggestion.date}`;
+        if (!existing.has(key)) {
+          updated.push({ id: uid('rem'), tripId, name: suggestion.name, date: suggestion.date });
+          existing.add(key);
+          mutated = true;
+        }
+      });
+      if (!mutated) {
+        return;
+      }
+      store.set(remindersKey(me.email), updated);
+      writeRemindersToSupabase(me.email, updated);
+      renderList();
+    };
+    bindEventOnce(suggestionsAddAllBtn, 'click', handleAddAllSuggestions, 'reminder-add-all');
+  }
   // Add new reminder
   if (addBtn) {
     const handleAddReminder = (ev) => {
@@ -3753,6 +4204,8 @@ function wirePackingPage(me) {
   const listEl    = qs('#packing-items-list');
   const inputEl   = qs('#packing-item-input');
   const addBtn    = qs('#packing-add-btn');
+  const importanceSelect = qs('#packing-importance-select');
+  const urgentToggle = qs('#packing-urgent-toggle');
   if (!tripSelect || !listEl || !inputEl || !addBtn) return; // not on packing page
 
   const trips = getTrips(me.email) || [];
@@ -3769,6 +4222,19 @@ function wirePackingPage(me) {
     addBtn.disabled = !hasTrip;
     addBtn.classList.toggle('opacity-50', !hasTrip);
     addBtn.classList.toggle('cursor-not-allowed', !hasTrip);
+    inputEl.disabled = !hasTrip;
+    inputEl.classList.toggle('opacity-50', !hasTrip);
+    inputEl.classList.toggle('cursor-not-allowed', !hasTrip);
+    if (importanceSelect) {
+      importanceSelect.disabled = !hasTrip;
+      importanceSelect.classList.toggle('opacity-50', !hasTrip);
+      importanceSelect.classList.toggle('cursor-not-allowed', !hasTrip);
+    }
+    if (urgentToggle) {
+      urgentToggle.disabled = !hasTrip;
+      urgentToggle.classList.toggle('opacity-50', !hasTrip);
+      urgentToggle.classList.toggle('cursor-not-allowed', !hasTrip);
+    }
   }
 
   function renderList() {
@@ -3791,25 +4257,37 @@ function wirePackingPage(me) {
       return;
     }
 
-    items.forEach((item) => {
+    const importanceRank = { essential: 0, useful: 1, optional: 2 };
+    const importanceBadgeClass = {
+      essential: 'px-2 py-0.5 rounded-full bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-200',
+      useful: 'px-2 py-0.5 rounded-full bg-sky-100 text-sky-700 dark:bg-sky-900/40 dark:text-sky-200',
+      optional: 'px-2 py-0.5 rounded-full bg-slate-200 text-slate-700 dark:bg-slate-700/60 dark:text-slate-200',
+    };
+
+    const sorted = mergeSort(items, (a, b) => {
+      const rankA = importanceRank[(a?.importance || '').toLowerCase()] ?? 1;
+      const rankB = importanceRank[(b?.importance || '').toLowerCase()] ?? 1;
+      if (rankA !== rankB) return rankA - rankB;
+      const urgencyDiff = Number(Boolean(b?.urgent)) - Number(Boolean(a?.urgent));
+      if (urgencyDiff !== 0) return urgencyDiff;
+      const nameA = (a?.name || '').toLowerCase();
+      const nameB = (b?.name || '').toLowerCase();
+      if (nameA === nameB) return 0;
+      return nameA > nameB ? 1 : -1;
+    });
+
+    sorted.forEach((item) => {
       if (!item || !item.id) return;
       const li = document.createElement('li');
-      li.className = 'flex items-center justify-between p-3 bg-white dark:bg-slate-800 rounded-md shadow-sm';
+      li.className = 'flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between p-4 bg-white dark:bg-slate-800 rounded-md shadow-sm border border-slate-200/60 dark:border-slate-700/60';
 
-      const left = document.createElement('label');
-      left.className = 'flex items-center gap-2 cursor-pointer';
+      const leftWrap = document.createElement('div');
+      leftWrap.className = 'flex items-start gap-3';
 
       const checkbox = document.createElement('input');
       checkbox.type = 'checkbox';
-      checkbox.className = 'h-4 w-4 text-primary border-slate-300 rounded';
+      checkbox.className = 'mt-1 h-4 w-4 text-primary border-slate-300 rounded';
       checkbox.checked = Boolean(item.packed);
-
-      const nameSpan = document.createElement('span');
-      nameSpan.textContent = item.name || 'Item';
-      nameSpan.className = checkbox.checked
-        ? 'line-through text-slate-500 dark:text-slate-400'
-        : 'text-slate-800 dark:text-slate-100';
-
       checkbox.addEventListener('change', () => {
         const updated = getPackingItems(tripId).map((it) =>
           it.id === item.id ? { ...it, packed: checkbox.checked } : it
@@ -3818,9 +4296,70 @@ function wirePackingPage(me) {
         renderList();
       });
 
-      left.appendChild(checkbox);
-      left.appendChild(nameSpan);
-      li.appendChild(left);
+      const textWrap = document.createElement('div');
+      const nameSpan = document.createElement('span');
+      nameSpan.textContent = item.name || 'Item';
+      nameSpan.className = checkbox.checked
+        ? 'font-medium line-through text-slate-500 dark:text-slate-400'
+        : 'font-medium text-slate-800 dark:text-slate-100';
+
+      const meta = document.createElement('div');
+      meta.className = 'mt-1 flex flex-wrap items-center gap-2 text-xs';
+      const importanceValue = (item.importance || 'useful').toLowerCase();
+      const importanceLabel = importanceValue.charAt(0).toUpperCase() + importanceValue.slice(1);
+      const badge = document.createElement('span');
+      badge.className = importanceBadgeClass[importanceValue] || importanceBadgeClass.useful;
+      badge.textContent = importanceLabel;
+      meta.appendChild(badge);
+
+      if (item.urgent) {
+        const urgentBadge = document.createElement('span');
+        urgentBadge.className = 'px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-200';
+        urgentBadge.textContent = 'Urgent';
+        meta.appendChild(urgentBadge);
+      }
+
+      textWrap.appendChild(nameSpan);
+      textWrap.appendChild(meta);
+
+      leftWrap.appendChild(checkbox);
+      leftWrap.appendChild(textWrap);
+
+      const controls = document.createElement('div');
+      controls.className = 'flex flex-wrap items-center gap-3 sm:justify-end';
+
+      const importanceControl = document.createElement('select');
+      importanceControl.className = 'rounded-md border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 text-xs font-medium text-slate-700 dark:text-slate-200 px-2 py-1 focus:outline-none focus:ring-2 focus:ring-primary';
+      ['essential', 'useful', 'optional'].forEach((value) => {
+        const opt = document.createElement('option');
+        opt.value = value;
+        opt.textContent = value.charAt(0).toUpperCase() + value.slice(1);
+        importanceControl.appendChild(opt);
+      });
+      importanceControl.value = importanceValue;
+      importanceControl.addEventListener('change', () => {
+        const updated = getPackingItems(tripId).map((it) =>
+          it.id === item.id ? { ...it, importance: importanceControl.value } : it
+        );
+        savePackingItems(tripId, updated);
+        renderList();
+      });
+
+      const urgentLabel = document.createElement('label');
+      urgentLabel.className = 'flex items-center gap-2 text-xs text-slate-600 dark:text-slate-300';
+      const urgentCheckbox = document.createElement('input');
+      urgentCheckbox.type = 'checkbox';
+      urgentCheckbox.className = 'rounded border-slate-300 dark:border-slate-600 text-primary focus:ring-primary';
+      urgentCheckbox.checked = Boolean(item.urgent);
+      urgentCheckbox.addEventListener('change', () => {
+        const updated = getPackingItems(tripId).map((it) =>
+          it.id === item.id ? { ...it, urgent: urgentCheckbox.checked } : it
+        );
+        savePackingItems(tripId, updated);
+        renderList();
+      });
+      urgentLabel.appendChild(urgentCheckbox);
+      urgentLabel.appendChild(document.createTextNode('Urgent'));
 
       const delBtn = document.createElement('button');
       delBtn.type = 'button';
@@ -3832,7 +4371,13 @@ function wirePackingPage(me) {
         savePackingItems(tripId, updated);
         renderList();
       });
-      li.appendChild(delBtn);
+
+      controls.appendChild(importanceControl);
+      controls.appendChild(urgentLabel);
+      controls.appendChild(delBtn);
+
+      li.appendChild(leftWrap);
+      li.appendChild(controls);
 
       listEl.appendChild(li);
     });
@@ -3854,10 +4399,18 @@ function wirePackingPage(me) {
       return;
     }
     const items = getPackingItems(tripId);
-    const newItem = { id: uid('pack'), name, packed: false };
+    const importance = (importanceSelect?.value || 'useful').toLowerCase();
+    const urgent = Boolean(urgentToggle?.checked);
+    const newItem = { id: uid('pack'), name, packed: false, importance, urgent };
     const updated = [...items, newItem];
     savePackingItems(tripId, updated);
     inputEl.value = '';
+    if (importanceSelect) {
+      importanceSelect.value = 'useful';
+    }
+    if (urgentToggle) {
+      urgentToggle.checked = false;
+    }
     renderList();
   };
   bindEventOnce(addBtn, 'click', handleAddPackingItem, 'packing-add');
