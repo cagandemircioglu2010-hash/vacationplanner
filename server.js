@@ -487,32 +487,52 @@ function normalizeResetRequestPath(pathname) {
   return trimmed;
 }
 
-async function sendResetEmail(email, token, resetUrl) {
+function coerceHttpsUrl(candidate) {
+  if (typeof candidate !== 'string') {
+    return null;
+  }
+  try {
+    const parsed = new URL(candidate);
+    if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
+      return parsed.toString();
+    }
+  } catch {}
+  return null;
+}
+
+function coerceExpirationDate(expiresAt) {
+  if (expiresAt) {
+    const parsed = new Date(expiresAt);
+    if (!Number.isNaN(parsed.getTime())) {
+      return parsed;
+    }
+  }
+  return new Date(Date.now() + FALLBACK_TOKEN_TTL_MS);
+}
+
+async function sendResetEmail({ email, token, resetUrl, expiresAt }) {
   const config = getEmailConfig();
   if (!config) {
     const error = new Error('Email service is not configured.');
     error.code = 'EMAIL_NOT_CONFIGURED';
     throw error;
   }
+
   const fromHeader = config.fromName ? `${config.fromName} <${config.from}>` : config.from;
-  const expiresAt = new Date(Date.now() + 30 * 60 * 1000);
-  const formattedExpiry = expiresAt.toUTCString();
-  let safeResetUrl = null;
-  if (typeof resetUrl === 'string') {
-    try {
-      const parsed = new URL(resetUrl);
-      if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
-        safeResetUrl = parsed.toString();
-      }
-    } catch {}
-  }
+  const expirationDate = coerceExpirationDate(expiresAt);
+  const formattedExpiry = expirationDate.toUTCString();
+  const minutesUntilExpiry = Math.max(
+    1,
+    Math.round(Math.max(0, expirationDate.getTime() - Date.now()) / 60000)
+  );
+  const safeResetUrl = coerceHttpsUrl(resetUrl);
   const textBody = `You requested to reset your Vacation Planner password.\n\n` +
     `Your reset code is: ${token}\n\n` +
-    `Enter this code within 30 minutes to choose a new password.${safeResetUrl ? `\n\nYou can also reset your password using this link: ${safeResetUrl}` : ''}\n\n` +
+    `Enter this code within ${minutesUntilExpiry} minute${minutesUntilExpiry === 1 ? '' : 's'} before it expires.${safeResetUrl ? `\n\nYou can also reset your password using this link: ${safeResetUrl}` : ''}\n\n` +
     `If you did not request this change, you can ignore this email.`;
   const htmlBody = `<p>You requested to reset your <strong>Vacation Planner</strong> password.</p>` +
     `<p><strong>Your reset code:</strong> <code style="font-size:1.1rem;">${token}</code></p>` +
-    `<p>Enter this code within 30 minutes to choose a new password.</p>` +
+    `<p>Enter this code within ${minutesUntilExpiry} minute${minutesUntilExpiry === 1 ? '' : 's'} before it expires.</p>` +
     `${safeResetUrl ? `<p>You can also <a href="${safeResetUrl}">reset your password using this link</a>.</p>` : ''}` +
     `<p>If you did not request this change, you can ignore this email.</p>` +
     `<p><small>This code expires at ${formattedExpiry}.</small></p>`;
@@ -632,7 +652,12 @@ const server = http.createServer(async (req, res) => {
         const builtResetLink = buildResetLink(req, recordEmail, effectiveToken);
         const providedResetUrl = normalizeProvidedResetUrl(body?.resetUrl, recordEmail, effectiveToken, builtResetLink);
         const resetLink = providedResetUrl || builtResetLink;
-        await sendResetEmail(recordEmail, effectiveToken, resetLink);
+        await sendResetEmail({
+          email: recordEmail,
+          token: effectiveToken,
+          resetUrl: resetLink,
+          expiresAt: record.expires_at
+        });
         sendJson(res, 200, { ok: true });
       } catch (err) {
         if (err.code === 'EMAIL_NOT_CONFIGURED') {
