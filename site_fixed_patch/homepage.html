@@ -259,6 +259,26 @@
   <!-- Dynamic upcoming trips will be injected into this container by app.js -->
   <div id="home-upcoming" class="space-y-4"></div>
 </div>
+<!-- Destination insights section combining live weather data and smart packing suggestions. -->
+<div class="mt-12">
+  <h3 class="text-2xl font-bold text-slate-900 dark:text-white mb-2">Destination Insights</h3>
+  <p class="text-sm text-slate-600 dark:text-slate-400 mb-6">We analyse real-time forecasts to help you prepare for your next adventure.</p>
+  <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+    <section id="home-weather-card" class="bg-white dark:bg-background-dark p-4 sm:p-6 rounded-lg shadow-sm">
+      <p class="text-sm opacity-70">Add an upcoming trip to see the latest weather outlook.</p>
+    </section>
+    <section class="bg-white dark:bg-background-dark p-4 sm:p-6 rounded-lg shadow-sm flex flex-col">
+      <div id="home-smart-packing" class="flex-1">
+        <p class="text-sm opacity-70">Weather-aware packing tips will appear here once a destination is selected.</p>
+      </div>
+      <button id="home-smart-packing-apply" class="mt-4 inline-flex items-center justify-center gap-2 rounded-full bg-primary text-white px-4 py-2 text-sm font-semibold opacity-50 cursor-not-allowed" type="button" disabled>
+        <span class="material-symbols-outlined text-base">add_task</span>
+        Add suggestions to packing list
+      </button>
+      <p id="home-smart-packing-feedback" class="mt-2 text-sm hidden"></p>
+    </section>
+  </div>
+</div>
 <!-- New section for upcoming reminders.  This will display the next few reminders across all trips.  Populated in app.js via renderHomepage(). -->
 <div class="mt-12">
   <h3 class="text-2xl font-bold text-slate-900 dark:text-white mb-6">Upcoming Reminders</h3>
