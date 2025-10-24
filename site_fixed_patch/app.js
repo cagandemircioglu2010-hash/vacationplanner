@@ -598,7 +598,7 @@ function applySmartPackingSuggestions(tripId, suggestions) {
     const key = trimmed.toLowerCase();
     if (existingNames.has(key)) return;
     existingNames.add(key);
-    updated.push({ id: uid('pack'), name: trimmed, packed: false, smart: true });
+    updated.push({ id: generateUuid(), name: trimmed, packed: false, smart: true });
     added += 1;
   });
   if (added > 0) {
@@ -956,15 +956,18 @@ function normalizeReminderFromSupabase(reminder) {
 
 function serializeReminderForSupabase(reminder, email) {
   if (!reminder || typeof reminder !== 'object' || !email) return null;
-  const payload = { ...reminder, email };
-  if (payload.tripId && !payload.trip_id) payload.trip_id = payload.tripId;
-  if (payload.createdAt && !payload.created_at) payload.created_at = payload.createdAt;
-  if (payload.updatedAt && !payload.updated_at) payload.updated_at = payload.updatedAt;
-  payload.completed = Boolean(payload.completed);
-  delete payload.tripId;
-  delete payload.createdAt;
-  delete payload.updatedAt;
-  if (!payload.trip_id) return null;
+  const tripRef = reminder.tripId || reminder.trip_id;
+  if (!tripRef) return null;
+  const payload = {
+    id: isUuid(reminder.id) ? reminder.id : generateUuid(),
+    email,
+    trip_id: String(tripRef),
+    name: typeof reminder.name === 'string' && reminder.name.trim() ? reminder.name.trim() : 'Reminder',
+    date: typeof reminder.date === 'string' ? reminder.date : String(reminder.date ?? ''),
+    completed: Boolean(reminder.completed)
+  };
+  if (reminder.createdAt && !payload.created_at) payload.created_at = reminder.createdAt;
+  if (reminder.updatedAt && !payload.updated_at) payload.updated_at = reminder.updatedAt;
   return payload;
 }
 
@@ -1204,7 +1207,13 @@ async function writePackingToSupabase(email, tripId, items) {
     return;
   }
 
-  const payload = items.map(item => ({ ...item, email, trip_id: tripId }));
+  const payload = items.map(item => ({
+    id: isUuid(item.id) ? item.id : generateUuid(),
+    email,
+    trip_id: tripId,
+    name: typeof item.name === 'string' && item.name.trim() ? item.name.trim() : 'Item',
+    packed: Boolean(item.packed)
+  }));
   try {
     const { error } = await supabase.from('packing').upsert(payload);
     if (error) {
@@ -1430,7 +1439,29 @@ const fmtMoney = (n) => {
   }
 };
 
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function generateUuid() {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  // Fallback implementation adapted from RFC 4122 section 4.4.
+  const template = 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx';
+  return template.replace(/[xy]/g, (ch) => {
+    const r = Math.random() * 16 | 0;
+    const v = ch === 'x' ? r : (r & 0x3) | 0x8;
+    return v.toString(16);
+  });
+}
+
+function isUuid(value) {
+  return typeof value === 'string' && UUID_REGEX.test(value);
+}
+
 function uid(prefix = "id") {
+  if (prefix === 'pack' || prefix === 'rem') {
+    return generateUuid();
+  }
   return `${prefix}_${Math.random().toString(36).slice(2)}_${Date.now()}`;
 }
 
@@ -2374,8 +2405,8 @@ function normalisePackingItems(items) {
   const list = Array.isArray(items) ? items : [];
   const normalised = list.map((item) => {
     const data = item && typeof item === 'object' ? { ...item } : {};
-    if (!data.id) {
-      data.id = uid('pack');
+    if (!data.id || !isUuid(data.id)) {
+      data.id = generateUuid();
       mutated = true;
     }
     if (typeof data.name !== 'string') {
@@ -2404,7 +2435,14 @@ function normalisePackingItems(items) {
       data.packed = packed;
       mutated = true;
     }
-    return data;
+    return {
+      id: data.id,
+      name: data.name,
+      packed: data.packed,
+      importance: data.importance,
+      urgent: data.urgent,
+      smart: Boolean(data.smart)
+    };
   });
   return { items: normalised, mutated };
 }
@@ -2438,8 +2476,8 @@ function normaliseReminders(reminders) {
   let mutated = false;
   const items = list.map((reminder) => {
     const data = reminder && typeof reminder === 'object' ? { ...reminder } : {};
-    if (!data.id) {
-      data.id = uid('rem');
+    if (!data.id || !isUuid(data.id)) {
+      data.id = generateUuid();
       mutated = true;
     }
     if (data.trip_id && !data.tripId) {
@@ -4410,7 +4448,7 @@ function wireRemindersPage(me) {
     if (exists) {
       return;
     }
-    const updated = [...allRems, { id: uid('rem'), tripId, name: suggestion.name, date: suggestion.date, completed: false }];
+    const updated = [...allRems, { id: generateUuid(), tripId, name: suggestion.name, date: suggestion.date, completed: false }];
     saveReminders(me.email, updated);
     renderList();
   }
@@ -4666,7 +4704,7 @@ function wireRemindersPage(me) {
       suggestions.forEach((suggestion) => {
         const key = `${suggestion.name}|${suggestion.date}`;
         if (!existing.has(key)) {
-          updated.push({ id: uid('rem'), tripId, name: suggestion.name, date: suggestion.date, completed: false });
+          updated.push({ id: generateUuid(), tripId, name: suggestion.name, date: suggestion.date, completed: false });
           existing.add(key);
           mutated = true;
         }
@@ -4691,7 +4729,7 @@ function wireRemindersPage(me) {
         return;
       }
       const allRems = getReminders(me.email) || [];
-      const newRem  = { id: uid('rem'), tripId, name, date, completed: false };
+      const newRem  = { id: generateUuid(), tripId, name, date, completed: false };
       const updated = [...allRems, newRem];
       saveReminders(me.email, updated);
       // Clear the form fields and refresh list
@@ -4908,7 +4946,7 @@ function wirePackingPage(me) {
     const items = getPackingItems(tripId);
     const importance = (importanceSelect?.value || 'useful').toLowerCase();
     const urgent = Boolean(urgentToggle?.checked);
-    const newItem = { id: uid('pack'), name, packed: false, importance, urgent };
+    const newItem = { id: generateUuid(), name, packed: false, importance, urgent };
     const updated = [...items, newItem];
     savePackingItems(tripId, updated);
     inputEl.value = '';
