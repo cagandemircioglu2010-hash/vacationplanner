@@ -956,16 +956,60 @@ function normalizeReminderFromSupabase(reminder) {
 
 function serializeReminderForSupabase(reminder, email) {
   if (!reminder || typeof reminder !== 'object' || !email) return null;
-  const payload = { ...reminder, email };
-  if (payload.tripId && !payload.trip_id) payload.trip_id = payload.tripId;
-  if (payload.createdAt && !payload.created_at) payload.created_at = payload.createdAt;
-  if (payload.updatedAt && !payload.updated_at) payload.updated_at = payload.updatedAt;
-  payload.completed = Boolean(payload.completed);
-  delete payload.tripId;
-  delete payload.createdAt;
-  delete payload.updatedAt;
-  if (!payload.trip_id) return null;
-  return payload;
+
+  const id = (() => {
+    const candidates = [reminder.id, reminder.reminderId];
+    for (const candidate of candidates) {
+      if (candidate == null) continue;
+      const str = String(candidate).trim();
+      if (str) return str;
+    }
+    return uid('rem');
+  })();
+
+  const tripId = (() => {
+    const candidates = [reminder.trip_id, reminder.tripId];
+    for (const candidate of candidates) {
+      if (candidate == null) continue;
+      const str = String(candidate).trim();
+      if (str) return str;
+    }
+    return '';
+  })();
+
+  if (!tripId) return null;
+
+  const name = typeof reminder.name === 'string' ? reminder.name.trim() : '';
+  const dateValue = typeof reminder.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(reminder.date)
+    ? reminder.date
+    : formatDateInput(reminder.date || new Date());
+
+  return {
+    id,
+    email,
+    trip_id: tripId,
+    name: name || 'Reminder',
+    date: dateValue || formatDateInput(new Date())
+  };
+}
+
+function serializePackingItemForSupabase(item, email, tripId) {
+  if (!item || typeof item !== 'object' || !email || !tripId) return null;
+  const id = (() => {
+    if (item.id != null) {
+      const str = String(item.id).trim();
+      if (str) return str;
+    }
+    return uid('pack');
+  })();
+  const name = typeof item.name === 'string' ? item.name.trim() : '';
+  return {
+    id,
+    email,
+    trip_id: String(tripId),
+    name: name || 'Item',
+    packed: Boolean(item.packed)
+  };
 }
 
 function mergeTripCollections(localTrips = [], remoteTrips = []) {
@@ -1200,11 +1244,13 @@ async function writePackingToSupabase(email, tripId, items) {
     console.error('Error deleting old packing items from Supabase:', err);
   }
 
-  if (!items.length) {
+  const payload = items
+    .map(item => serializePackingItemForSupabase(item, email, tripId))
+    .filter(Boolean);
+
+  if (!payload.length) {
     return;
   }
-
-  const payload = items.map(item => ({ ...item, email, trip_id: tripId }));
   try {
     const { error } = await supabase.from('packing').upsert(payload);
     if (error) {
