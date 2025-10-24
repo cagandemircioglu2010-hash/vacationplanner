@@ -603,6 +603,15 @@ function applySmartPackingSuggestions(tripId, suggestions) {
   });
   if (added > 0) {
     savePackingItems(tripId, updated);
+    if (typeof window !== 'undefined' && typeof window.dispatchEvent === 'function') {
+      try {
+        window.dispatchEvent(new CustomEvent('wl:packing-updated', {
+          detail: { tripId, source: 'smart-suggestions' }
+        }));
+      } catch (err) {
+        console.error('Failed to broadcast packing update event:', err);
+      }
+    }
   }
   return added;
 }
@@ -646,7 +655,23 @@ function removeRecentTrip(email, tripId) {
 // after syncFromSupabase() runs.  Returns an empty array when no
 // reminders exist.  Do not modify the returned array directly.
 function getReminders(email) {
-  return store.get(remindersKey(email), []) || [];
+  const stored = store.get(remindersKey(email), []) || [];
+  const { items, mutated } = normaliseReminders(stored);
+  if (mutated && email) {
+    store.set(remindersKey(email), items);
+    const sess = getSession();
+    if (sess?.email === email) {
+      writeRemindersToSupabase(email, items);
+    }
+  }
+  return items;
+}
+
+function saveReminders(email, reminders) {
+  if (!email) return;
+  const { items } = normaliseReminders(reminders);
+  store.set(remindersKey(email), items);
+  writeRemindersToSupabase(email, items);
 }
 
 // Retrieve all expenses for a specific trip from localStorage.  Returns
@@ -921,6 +946,8 @@ function normalizeReminderFromSupabase(reminder) {
   if (normalized.trip_id && !normalized.tripId) normalized.tripId = normalized.trip_id;
   if (normalized.created_at && !normalized.createdAt) normalized.createdAt = normalized.created_at;
   if (normalized.updated_at && !normalized.updatedAt) normalized.updatedAt = normalized.updated_at;
+  const completed = Boolean(normalized.completed);
+  if (normalized.completed !== completed) normalized.completed = completed;
   delete normalized.trip_id;
   delete normalized.created_at;
   delete normalized.updated_at;
@@ -933,6 +960,7 @@ function serializeReminderForSupabase(reminder, email) {
   if (payload.tripId && !payload.trip_id) payload.trip_id = payload.tripId;
   if (payload.createdAt && !payload.created_at) payload.created_at = payload.createdAt;
   if (payload.updatedAt && !payload.updated_at) payload.updated_at = payload.updatedAt;
+  payload.completed = Boolean(payload.completed);
   delete payload.tripId;
   delete payload.createdAt;
   delete payload.updatedAt;
@@ -1016,7 +1044,8 @@ async function syncFromSupabase(me) {
     const normalizedRems = Array.isArray(rems)
       ? rems.map(normalizeReminderFromSupabase).filter(Boolean)
       : [];
-    store.set(remindersKey(me.email), normalizedRems);
+    const { items } = normaliseReminders(normalizedRems);
+    store.set(remindersKey(me.email), items);
   }
 
   // Pull packing lists for each trip.  Packing items are stored in the
@@ -1607,7 +1636,7 @@ async function deleteTripCascade(email, tripId) {
   removeRecentTrip(email, tripId);
 
   const remainingReminders = (getReminders(email) || []).filter((rem) => rem?.tripId !== tripId);
-  store.set(remindersKey(email), remainingReminders);
+  saveReminders(email, remainingReminders);
 
   const nextSelection = (() => {
     const stored = getStoredTripSelection(email);
@@ -1633,12 +1662,6 @@ async function deleteTripCascade(email, tripId) {
   } catch (err) {
     console.error('Error removing packing items for deleted trip:', err);
   }
-  try {
-    await writeRemindersToSupabase(email, remainingReminders);
-  } catch (err) {
-    console.error('Error syncing reminders after trip deletion:', err);
-  }
-
   return remainingTrips;
 }
 
@@ -2063,13 +2086,15 @@ function renderDestinationInsightsSection(trip, email) {
     return;
   }
 
-  destinationEl.dataset.tripId = trip.id || '';
+  const activeTripId = trip.id || trip.tripId || '';
+  destinationEl.dataset.tripId = activeTripId;
   destinationEl.innerHTML = `<p class="text-sm opacity-70">Gathering destination insights for ${escapeHtml(trip.location || trip.name || 'your trip')}…</p>`;
   tipsEl.innerHTML = '<p class="text-sm opacity-70">Collecting tailored travel tips…</p>';
   disableApplyButton();
 
+  const expectedTripId = trip.id || trip.tripId || '';
   fetchDestinationInsights(trip).then((insights) => {
-    if ((destinationEl.dataset.tripId || '') !== (trip.id || '')) {
+    if ((destinationEl.dataset.tripId || '') !== expectedTripId) {
       return;
     }
     if (!insights) {
@@ -2081,7 +2106,7 @@ function renderDestinationInsightsSection(trip, email) {
     renderDestinationCard(destinationEl, insights, trip);
     const suggestions = buildDestinationPackingSuggestions(insights, trip);
     renderTravelTips(tipsEl, suggestions, trip);
-    destinationInsightState.tripId = trip.id || null;
+    destinationInsightState.tripId = trip.id || trip.tripId || null;
     destinationInsightState.suggestions = suggestions;
     destinationInsightState.email = email || null;
     if (Array.isArray(suggestions) && suggestions.length > 0) {
@@ -2091,7 +2116,7 @@ function renderDestinationInsightsSection(trip, email) {
     }
   }).catch((err) => {
     console.error('Unable to render destination insights:', err);
-    if ((destinationEl.dataset.tripId || '') !== (trip.id || '')) {
+    if ((destinationEl.dataset.tripId || '') !== expectedTripId) {
       return;
     }
     destinationEl.innerHTML = '<p class="text-sm text-red-500">We couldn\'t load destination insights right now.</p>';
@@ -2208,7 +2233,7 @@ function renderRemindersSection(email) {
   if (!remindersContainer) return;
   remindersContainer.innerHTML = '';
 
-  const allRems = getReminders(email) || [];
+  const allRems = (getReminders(email) || []).filter(rem => !rem?.completed);
   const tree = new ReminderTree();
   allRems.forEach(rem => tree.insert(rem));
 
@@ -2408,6 +2433,56 @@ function savePackingItems(tripId, items) {
   }
 }
 
+function normaliseReminders(reminders) {
+  const list = Array.isArray(reminders) ? reminders : [];
+  let mutated = false;
+  const items = list.map((reminder) => {
+    const data = reminder && typeof reminder === 'object' ? { ...reminder } : {};
+    if (!data.id) {
+      data.id = uid('rem');
+      mutated = true;
+    }
+    if (data.trip_id && !data.tripId) {
+      data.tripId = data.trip_id;
+      mutated = true;
+    }
+    if (typeof data.tripId !== 'string') {
+      if (data.tripId != null) {
+        data.tripId = String(data.tripId);
+      } else {
+        data.tripId = '';
+      }
+      mutated = true;
+    }
+    if (typeof data.name !== 'string') {
+      data.name = 'Reminder';
+      mutated = true;
+    } else {
+      const trimmed = data.name.trim();
+      if (trimmed !== data.name) {
+        data.name = trimmed || 'Reminder';
+        mutated = true;
+      }
+    }
+    if (typeof data.date !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(data.date)) {
+      const fallback = formatDateInput(data.date || new Date());
+      data.date = fallback || formatDateInput(new Date());
+      mutated = true;
+    }
+    const completed = Boolean(data.completed);
+    if (data.completed !== completed) {
+      data.completed = completed;
+      mutated = true;
+    }
+    if (data.notes != null && typeof data.notes !== 'string') {
+      data.notes = String(data.notes);
+      mutated = true;
+    }
+    return data;
+  });
+  return { items, mutated };
+}
+
 function wireBudgetPage(me) {
   // The vacation selector is a <select> element (see budget.html).  It
   // replaces the previous free‑text input to provide a simpler way to
@@ -2428,6 +2503,31 @@ function wireBudgetPage(me) {
   const forecastIconEl = qs('#budget-forecast-icon');
   const forecastMessageEl = qs('#budget-forecast-message');
   const forecastDetailEl = qs('#budget-forecast-detail');
+  const budgetInsightsEl = qs('#budget-insights');
+  const budgetInsightElements = budgetInsightsEl ? {
+    allowance: {
+      card: budgetInsightsEl.querySelector('[data-insight-card="allowance"]'),
+      value: budgetInsightsEl.querySelector('[data-insight="allowance"]'),
+      detail: budgetInsightsEl.querySelector('[data-insight-detail="allowance"]'),
+    },
+    daily: {
+      card: budgetInsightsEl.querySelector('[data-insight-card="daily"]'),
+      value: budgetInsightsEl.querySelector('[data-insight="daily"]'),
+      detail: budgetInsightsEl.querySelector('[data-insight-detail="daily"]'),
+    },
+    pace: {
+      card: budgetInsightsEl.querySelector('[data-insight-card="pace"]'),
+      value: budgetInsightsEl.querySelector('[data-insight="pace"]'),
+      detail: budgetInsightsEl.querySelector('[data-insight-detail="pace"]'),
+    },
+  } : null;
+  const defaultBudgetInsightDetail = {
+    allowance: 'Select a trip to see your recommended pace.',
+    daily: 'We\'ll calculate this once your trip begins.',
+    pace: 'Stay within your allowance to end the trip on budget.',
+  };
+  const paceValueClasses = ['text-emerald-600', 'dark:text-emerald-300', 'text-red-600', 'dark:text-red-300', 'text-gray-900', 'dark:text-white'];
+  const paceCardClasses = ['bg-emerald-50', 'dark:bg-emerald-900/20', 'bg-red-50', 'dark:bg-red-900/20'];
 
   // Handle currency selection changes on the budget page.  When the user selects a
   // different currency, update the converter and refresh the table, chart and
@@ -2555,6 +2655,169 @@ function wireBudgetPage(me) {
   const allForecastMessageClasses = Array.from(new Set(Object.values(forecastStyles).flatMap((style) => style.message || [])));
   const allForecastDetailClasses = Array.from(new Set(Object.values(forecastStyles).flatMap((style) => style.detail || [])));
   const allForecastIconClasses = Array.from(new Set(Object.values(forecastStyles).flatMap((style) => style.icon || [])));
+
+  function resetBudgetInsights() {
+    if (!budgetInsightElements) return;
+    Object.entries(budgetInsightElements).forEach(([key, entry]) => {
+      if (!entry) return;
+      if (entry.value) {
+        paceValueClasses.forEach(cls => entry.value.classList.remove(cls));
+        entry.value.classList.add('text-gray-900', 'dark:text-white');
+        entry.value.textContent = '—';
+      }
+      if (entry.detail) {
+        entry.detail.textContent = defaultBudgetInsightDetail[key] || '';
+      }
+      if (key === 'pace' && entry.card) {
+        paceCardClasses.forEach(cls => entry.card.classList.remove(cls));
+      }
+    });
+  }
+
+  function calculateBudgetMetrics(trip, totalSpent, totalBudget) {
+    if (!trip || !trip.startDate || !trip.endDate) {
+      return null;
+    }
+    const start = toDateOnly(trip.startDate);
+    const end = toDateOnly(trip.endDate);
+    const today = toDateOnly(new Date());
+    if (!start || !end || !today) {
+      return null;
+    }
+    const totalDays = Math.max(1, Math.round((end - start) / MS_PER_DAY) + 1);
+    let daysElapsed;
+    if (today < start) {
+      daysElapsed = 0;
+    } else if (today > end) {
+      daysElapsed = totalDays;
+    } else {
+      daysElapsed = Math.floor((today - start) / MS_PER_DAY) + 1;
+    }
+    const daysRemaining = Math.max(0, totalDays - daysElapsed);
+    const dailyAllowance = totalBudget > 0 ? totalBudget / totalDays : 0;
+    const actualDaily = daysElapsed > 0 ? totalSpent / daysElapsed : 0;
+    const expectedSpend = dailyAllowance * daysElapsed;
+    const paceDelta = totalSpent - expectedSpend;
+    return { totalDays, daysElapsed, daysRemaining, dailyAllowance, actualDaily, paceDelta, expectedSpend };
+  }
+
+  function updateBudgetInsights(totalSpent, totalBudget) {
+    if (!budgetInsightElements) return;
+    if (!activeTrip || !activeTrip.id) {
+      resetBudgetInsights();
+      return;
+    }
+    const metrics = calculateBudgetMetrics(activeTrip, totalSpent, totalBudget);
+    if (!metrics) {
+      resetBudgetInsights();
+      return;
+    }
+
+    const allowanceEntry = budgetInsightElements.allowance;
+    if (allowanceEntry) {
+      if (allowanceEntry.value) {
+        paceValueClasses.forEach(cls => allowanceEntry.value.classList.remove(cls));
+        allowanceEntry.value.classList.add('text-gray-900', 'dark:text-white');
+        allowanceEntry.value.textContent = totalBudget > 0 ? fmtMoney(metrics.dailyAllowance) : '—';
+      }
+      if (allowanceEntry.detail) {
+        if (totalBudget > 0) {
+          const remainingText = metrics.daysRemaining === 0
+            ? 'Trip ends today.'
+            : `${metrics.daysRemaining} day${metrics.daysRemaining === 1 ? '' : 's'} remaining.`;
+          allowanceEntry.detail.textContent = `${metrics.totalDays} day trip • ${remainingText}`;
+        } else {
+          allowanceEntry.detail.textContent = 'Set a budget to unlock guidance.';
+        }
+      }
+    }
+
+    const dailyEntry = budgetInsightElements.daily;
+    if (dailyEntry) {
+      if (dailyEntry.value) {
+        paceValueClasses.forEach(cls => dailyEntry.value.classList.remove(cls));
+        dailyEntry.value.classList.add('text-gray-900', 'dark:text-white');
+        if (metrics.daysElapsed === 0) {
+          dailyEntry.value.textContent = '—';
+        } else {
+          dailyEntry.value.textContent = fmtMoney(metrics.actualDaily || 0);
+        }
+      }
+      if (dailyEntry.detail) {
+        if (metrics.daysElapsed === 0) {
+          dailyEntry.detail.textContent = 'Your trip hasn\'t started yet.';
+        } else {
+          const elapsedText = `${metrics.daysElapsed} day${metrics.daysElapsed === 1 ? '' : 's'} tracked`;
+          if (metrics.daysRemaining === 0) {
+            dailyEntry.detail.textContent = `${elapsedText}. Trip complete.`;
+          } else {
+            dailyEntry.detail.textContent = `${elapsedText}. ${metrics.daysRemaining} day${metrics.daysRemaining === 1 ? '' : 's'} remaining.`;
+          }
+        }
+      }
+    }
+
+    const paceEntry = budgetInsightElements.pace;
+    if (paceEntry) {
+      if (paceEntry.card) {
+        paceCardClasses.forEach(cls => paceEntry.card.classList.remove(cls));
+      }
+      if (paceEntry.value) {
+        paceValueClasses.forEach(cls => paceEntry.value.classList.remove(cls));
+      }
+      if (!(totalBudget > 0)) {
+        if (paceEntry.value) {
+          paceEntry.value.textContent = '—';
+          paceEntry.value.classList.add('text-gray-900', 'dark:text-white');
+        }
+        if (paceEntry.detail) {
+          paceEntry.detail.textContent = 'Set a budget to monitor your pace.';
+        }
+        return;
+      }
+      if (metrics.daysElapsed === 0) {
+        if (paceEntry.value) {
+          paceEntry.value.textContent = 'Not started';
+          paceEntry.value.classList.add('text-gray-900', 'dark:text-white');
+        }
+        if (paceEntry.detail) {
+          paceEntry.detail.textContent = `Aim for ${fmtMoney(metrics.dailyAllowance)} per day across ${metrics.totalDays} days.`;
+        }
+        return;
+      }
+      if (paceEntry.value) {
+        const ahead = metrics.paceDelta < -0.5;
+        const behind = metrics.paceDelta > 0.5;
+        if (ahead) {
+          const amount = fmtMoney(Math.abs(metrics.paceDelta));
+          paceEntry.value.textContent = `${amount} ahead`;
+          paceEntry.value.classList.add('text-emerald-600', 'dark:text-emerald-300');
+          if (paceEntry.card) {
+            paceEntry.card.classList.add('bg-emerald-50', 'dark:bg-emerald-900/20');
+          }
+          if (paceEntry.detail) {
+            paceEntry.detail.textContent = `You\'ve spent ${amount} less than the ${fmtMoney(metrics.expectedSpend)} expected so far.`;
+          }
+        } else if (behind) {
+          const amount = fmtMoney(metrics.paceDelta);
+          paceEntry.value.textContent = `${amount} over`;
+          paceEntry.value.classList.add('text-red-600', 'dark:text-red-300');
+          if (paceEntry.card) {
+            paceEntry.card.classList.add('bg-red-50', 'dark:bg-red-900/20');
+          }
+          if (paceEntry.detail) {
+            paceEntry.detail.textContent = `You\'ve spent ${amount} more than the ${fmtMoney(metrics.expectedSpend)} expected by now.`;
+          }
+        } else {
+          paceEntry.value.textContent = 'On pace';
+          paceEntry.value.classList.add('text-gray-900', 'dark:text-white');
+          if (paceEntry.detail) {
+            paceEntry.detail.textContent = `Spending matches the ${fmtMoney(metrics.expectedSpend)} expected so far.`;
+          }
+        }
+      }
+    }
+  }
 
   function computeBudgetForecast(trip, totalSpent, totalBudget) {
     if (!trip || !trip.startDate || !trip.endDate) {
@@ -3151,6 +3414,7 @@ function wireBudgetPage(me) {
       const bar = qs('#budget-usage-bar');
       if (bar) bar.style.width = '0%';
       updateBudgetForecast(0, 0);
+      updateBudgetInsights(0, 0);
       updateExpensesChart();
       updateTopCategories();
       return;
@@ -3195,6 +3459,7 @@ function wireBudgetPage(me) {
     if (bar) bar.style.width = `${pct}%`;
 
     updateBudgetForecast(totalSpent, totalBudget);
+    updateBudgetInsights(totalSpent, totalBudget);
 
     // After updating the table and summary values, redraw the expenses chart.  This
     // ensures the visualisation stays in sync with the underlying data.  The
@@ -3910,12 +4175,175 @@ function wireRemindersPage(me) {
   const suggestionsListEl = qs('#reminder-suggestions-list');
   const suggestionsEmptyEl = qs('#reminder-suggestions-empty');
   const suggestionsAddAllBtn = qs('#reminder-add-all');
+  const metricsContainer = qs('#reminder-metrics');
 
   const suggestionRules = [
     { offsetDays: 7, name: 'Check passport', description: '7 days before departure' },
     { offsetDays: 2, name: 'Pack luggage', description: '48 hours before departure' },
     { offsetDays: 0, name: 'Leave for airport', description: 'Departure day' },
   ];
+
+  const statusStyles = {
+    completed: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-200',
+    overdue: 'bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-200',
+    today: 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-200',
+    soon: 'bg-sky-100 text-sky-700 dark:bg-sky-900/40 dark:text-sky-200',
+    upcoming: 'bg-slate-200 text-slate-700 dark:bg-slate-700/60 dark:text-slate-200',
+    unknown: 'bg-slate-200 text-slate-700 dark:bg-slate-700/60 dark:text-slate-200',
+  };
+
+  function getReminderStatus(reminder) {
+    const dueDate = toDateOnly(reminder?.date);
+    const today = toDateOnly(new Date());
+    if (reminder?.completed) {
+      const diff = dueDate && today ? Math.round((dueDate - today) / MS_PER_DAY) : null;
+      return {
+        key: 'completed',
+        label: 'Completed',
+        className: statusStyles.completed,
+        daysUntil: diff,
+      };
+    }
+    if (!dueDate || !today) {
+      return {
+        key: 'unknown',
+        label: 'Date needed',
+        className: statusStyles.unknown,
+        daysUntil: null,
+      };
+    }
+    const diff = Math.round((dueDate - today) / MS_PER_DAY);
+    if (diff < 0) {
+      const overdueDays = Math.abs(diff);
+      return {
+        key: 'overdue',
+        label: overdueDays === 1 ? '1 day overdue' : `${overdueDays} days overdue`,
+        className: statusStyles.overdue,
+        daysUntil: diff,
+      };
+    }
+    if (diff === 0) {
+      return {
+        key: 'today',
+        label: 'Due today',
+        className: statusStyles.today,
+        daysUntil: diff,
+      };
+    }
+    if (diff === 1) {
+      return {
+        key: 'soon',
+        label: 'Due in 1 day',
+        className: statusStyles.soon,
+        daysUntil: diff,
+      };
+    }
+    if (diff <= 3) {
+      return {
+        key: 'soon',
+        label: `Due in ${diff} days`,
+        className: statusStyles.soon,
+        daysUntil: diff,
+      };
+    }
+    return {
+      key: 'upcoming',
+      label: `Due in ${diff} days`,
+      className: statusStyles.upcoming,
+      daysUntil: diff,
+    };
+  }
+
+  function formatRelativeDays(days) {
+    if (days == null) return '';
+    if (days === 0) return 'today';
+    if (days === 1) return 'in 1 day';
+    return `in ${days} days`;
+  }
+
+  function updateReminderMetrics(remindersForTrip) {
+    if (!metricsContainer) {
+      return;
+    }
+    if (!tripSelect.value) {
+      metricsContainer.classList.add('hidden');
+      metricsContainer.innerHTML = '';
+      return;
+    }
+    const reminders = Array.isArray(remindersForTrip) ? remindersForTrip : [];
+    metricsContainer.classList.remove('hidden');
+    let overdueCount = 0;
+    let dueSoonCount = 0;
+    let completedCount = 0;
+    let nextDiff = null;
+    reminders.forEach((rem) => {
+      const status = getReminderStatus(rem);
+      if (status.key === 'completed') {
+        completedCount += 1;
+        return;
+      }
+      if (status.key === 'overdue') {
+        overdueCount += 1;
+      }
+      if (status.daysUntil != null && status.daysUntil >= 0) {
+        if (status.key === 'today' || status.daysUntil <= 3) {
+          dueSoonCount += 1;
+        }
+        if (nextDiff == null || status.daysUntil < nextDiff) {
+          nextDiff = status.daysUntil;
+        }
+      }
+    });
+    const nextDetail = nextDiff == null
+      ? 'No upcoming reminders scheduled.'
+      : nextDiff === 0
+        ? 'Next reminder is due today.'
+        : `Next reminder ${formatRelativeDays(nextDiff)}.`;
+    const cards = [
+      {
+        key: 'overdue',
+        label: 'Overdue',
+        value: overdueCount,
+        container: 'border border-red-200 bg-red-50 dark:bg-red-900/30 dark:border-red-500/40',
+        valueClass: 'text-red-600 dark:text-red-300',
+        detail: overdueCount ? 'Handle these as soon as possible.' : 'All reminders are on schedule.',
+      },
+      {
+        key: 'dueSoon',
+        label: 'Due Soon',
+        value: dueSoonCount,
+        container: 'border border-amber-200 bg-amber-50 dark:bg-amber-900/30 dark:border-amber-500/40',
+        valueClass: 'text-amber-600 dark:text-amber-300',
+        detail: dueSoonCount ? nextDetail : 'Nothing urgent in the next few days.',
+      },
+      {
+        key: 'completed',
+        label: 'Completed',
+        value: completedCount,
+        container: 'border border-emerald-200 bg-emerald-50 dark:bg-emerald-900/30 dark:border-emerald-500/40',
+        valueClass: 'text-emerald-600 dark:text-emerald-300',
+        detail: completedCount ? 'Nice work ticking things off!' : 'Mark reminders as finished when you complete them.',
+      },
+    ];
+    metricsContainer.innerHTML = '';
+    cards.forEach((card) => {
+      const wrapper = document.createElement('div');
+      wrapper.className = `rounded-lg p-4 ${card.container}`;
+      const title = document.createElement('p');
+      title.className = 'text-sm font-medium text-gray-700 dark:text-gray-300';
+      title.textContent = card.label;
+      const value = document.createElement('p');
+      value.className = `mt-1 text-2xl font-bold ${card.valueClass}`;
+      value.textContent = String(card.value);
+      const detail = document.createElement('p');
+      detail.className = 'mt-2 text-xs text-gray-600 dark:text-gray-400';
+      detail.textContent = card.detail;
+      wrapper.appendChild(title);
+      wrapper.appendChild(value);
+      wrapper.appendChild(detail);
+      metricsContainer.appendChild(wrapper);
+    });
+  }
 
   const syncTripQuery = (tripId) => {
     const url = new URL(window.location.href);
@@ -3942,7 +4370,7 @@ function wireRemindersPage(me) {
       return [];
     }
     const today = toDateOnly(new Date());
-    const allRems = store.get(remindersKey(me.email), []) || [];
+    const allRems = getReminders(me.email) || [];
     const existing = new Set(
       allRems
         .filter(r => r.tripId === trip.id)
@@ -3976,15 +4404,14 @@ function wireRemindersPage(me) {
     if (!tripId || !suggestion) {
       return;
     }
-    const allRems = store.get(remindersKey(me.email), []) || [];
+    const allRems = getReminders(me.email) || [];
     const key = `${suggestion.name}|${suggestion.date}`;
     const exists = allRems.some(r => r.tripId === tripId && `${r.name}|${r.date}` === key);
     if (exists) {
       return;
     }
-    const updated = [...allRems, { id: uid('rem'), tripId, name: suggestion.name, date: suggestion.date }];
-    store.set(remindersKey(me.email), updated);
-    writeRemindersToSupabase(me.email, updated);
+    const updated = [...allRems, { id: uid('rem'), tripId, name: suggestion.name, date: suggestion.date, completed: false }];
+    saveReminders(me.email, updated);
     renderList();
   }
 
@@ -4075,6 +4502,10 @@ function wireRemindersPage(me) {
     listEl.innerHTML = '';
     const tripId = tripSelect.value;
     if (!tripId) {
+      if (metricsContainer) {
+        metricsContainer.classList.add('hidden');
+        metricsContainer.innerHTML = '';
+      }
       const msg = document.createElement('li');
       msg.className = 'text-sm text-gray-600 dark:text-gray-400';
       msg.textContent = trips.length > 0 ? 'Select a trip to view reminders.' : 'Create a trip to add reminders.';
@@ -4082,10 +4513,27 @@ function wireRemindersPage(me) {
       renderSuggestions();
       return;
     }
-    const allRems = store.get(remindersKey(me.email), []) || [];
+
+    const allRems = getReminders(me.email) || [];
     const rems = allRems.filter(r => r.tripId === tripId);
-    // sort by date ascending
-    const sortedRems = mergeSort(rems, (a, b) => new Date(a.date) - new Date(b.date));
+    const sortedRems = mergeSort(rems, (a, b) => {
+      const aCompleted = Boolean(a?.completed);
+      const bCompleted = Boolean(b?.completed);
+      if (aCompleted !== bCompleted) {
+        return Number(aCompleted) - Number(bCompleted);
+      }
+      const dateA = toDateOnly(a?.date);
+      const dateB = toDateOnly(b?.date);
+      const tsA = dateA ? dateA.getTime() : Number.POSITIVE_INFINITY;
+      const tsB = dateB ? dateB.getTime() : Number.POSITIVE_INFINITY;
+      if (tsA === tsB) {
+        return (a?.name || '').localeCompare(b?.name || '', undefined, { sensitivity: 'base' });
+      }
+      return tsA - tsB;
+    });
+
+    updateReminderMetrics(sortedRems);
+
     if (sortedRems.length === 0) {
       const msg = document.createElement('li');
       msg.className = 'text-sm text-gray-600 dark:text-gray-400';
@@ -4094,33 +4542,94 @@ function wireRemindersPage(me) {
       renderSuggestions();
       return;
     }
-    sortedRems.forEach(r => {
+
+    sortedRems.forEach((reminder) => {
       const li = document.createElement('li');
-      li.className = 'flex items-center justify-between p-4 rounded-lg bg-gray-100 dark:bg-gray-800';
-      // description
-      const desc = document.createElement('div');
-      const p1 = document.createElement('p');
-      p1.className = 'font-medium text-gray-900 dark:text-white';
-      p1.textContent = r.name;
-      const p2 = document.createElement('p');
-      p2.className = 'text-sm text-gray-600 dark:text-gray-400';
-      p2.textContent = r.date;
-      desc.appendChild(p1);
-      desc.appendChild(p2);
-      li.appendChild(desc);
-      // delete button
+      li.className = 'flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between p-4 rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/60';
+
+      const leftWrap = document.createElement('div');
+      leftWrap.className = 'flex items-start gap-3';
+
+      const checkbox = document.createElement('input');
+      checkbox.type = 'checkbox';
+      checkbox.className = 'mt-1 h-4 w-4 text-primary border-gray-300 rounded';
+      checkbox.checked = Boolean(reminder.completed);
+      checkbox.addEventListener('change', () => {
+        const updated = allRems.map((item) => (
+          item.id === reminder.id ? { ...item, completed: checkbox.checked } : item
+        ));
+        saveReminders(me.email, updated);
+        renderList();
+      });
+
+      const textWrap = document.createElement('div');
+      const title = document.createElement('p');
+      title.className = checkbox.checked
+        ? 'font-medium line-through text-gray-500 dark:text-gray-400'
+        : 'font-medium text-gray-900 dark:text-white';
+      title.textContent = reminder.name || 'Reminder';
+
+      const meta = document.createElement('div');
+      meta.className = 'mt-1 flex flex-wrap items-center gap-2 text-xs';
+      const dateBadge = document.createElement('span');
+      dateBadge.className = 'inline-flex items-center rounded-full bg-gray-200 dark:bg-gray-700/60 px-2 py-0.5 text-gray-700 dark:text-gray-200';
+      dateBadge.textContent = reminder.date || 'No date';
+      meta.appendChild(dateBadge);
+
+      const status = getReminderStatus(reminder);
+      const statusBadge = document.createElement('span');
+      statusBadge.className = `inline-flex items-center rounded-full px-2 py-0.5 font-semibold ${status.className}`;
+      statusBadge.textContent = status.label;
+      meta.appendChild(statusBadge);
+
+      textWrap.appendChild(title);
+      textWrap.appendChild(meta);
+
+      leftWrap.appendChild(checkbox);
+      leftWrap.appendChild(textWrap);
+
+      const controls = document.createElement('div');
+      controls.className = 'flex flex-wrap items-center gap-3 sm:justify-end';
+
+      const snoozeBtn = document.createElement('button');
+      snoozeBtn.type = 'button';
+      snoozeBtn.className = 'text-sm text-primary hover:text-primary/80';
+      snoozeBtn.textContent = 'Snooze 1 day';
+      if (status.key === 'completed') {
+        snoozeBtn.disabled = true;
+        snoozeBtn.classList.add('opacity-50', 'cursor-not-allowed');
+      }
+      snoozeBtn.addEventListener('click', (ev) => {
+        ev.preventDefault();
+        if (snoozeBtn.disabled) return;
+        const due = toDateOnly(reminder.date) || toDateOnly(new Date());
+        const next = due ? new Date(due.getTime() + MS_PER_DAY) : new Date();
+        const updated = allRems.map((item) => (
+          item.id === reminder.id
+            ? { ...item, date: formatDateInput(next), completed: false }
+            : item
+        ));
+        saveReminders(me.email, updated);
+        renderList();
+      });
+
       const delBtn = document.createElement('button');
-      delBtn.className = 'ml-4 text-red-500 hover:text-red-700';
+      delBtn.type = 'button';
+      delBtn.className = 'text-sm text-red-500 hover:text-red-700';
       delBtn.textContent = 'Delete';
       delBtn.addEventListener('click', (ev) => {
         ev.preventDefault();
-        // Remove reminder from array
-        const updated = allRems.filter(x => x.id !== r.id);
-        store.set(remindersKey(me.email), updated);
-        writeRemindersToSupabase(me.email, updated);
+        const updated = allRems.filter((item) => item.id !== reminder.id);
+        saveReminders(me.email, updated);
         renderList();
       });
-      li.appendChild(delBtn);
+
+      controls.appendChild(snoozeBtn);
+      controls.appendChild(delBtn);
+
+      li.appendChild(leftWrap);
+      li.appendChild(controls);
+
       listEl.appendChild(li);
     });
     renderSuggestions();
@@ -4146,7 +4655,7 @@ function wireRemindersPage(me) {
       if (!suggestions.length) {
         return;
       }
-      const allRems = store.get(remindersKey(me.email), []) || [];
+      const allRems = getReminders(me.email) || [];
       const existing = new Set(
         allRems
           .filter(r => r.tripId === tripId)
@@ -4157,7 +4666,7 @@ function wireRemindersPage(me) {
       suggestions.forEach((suggestion) => {
         const key = `${suggestion.name}|${suggestion.date}`;
         if (!existing.has(key)) {
-          updated.push({ id: uid('rem'), tripId, name: suggestion.name, date: suggestion.date });
+          updated.push({ id: uid('rem'), tripId, name: suggestion.name, date: suggestion.date, completed: false });
           existing.add(key);
           mutated = true;
         }
@@ -4165,8 +4674,7 @@ function wireRemindersPage(me) {
       if (!mutated) {
         return;
       }
-      store.set(remindersKey(me.email), updated);
-      writeRemindersToSupabase(me.email, updated);
+      saveReminders(me.email, updated);
       renderList();
     };
     bindEventOnce(suggestionsAddAllBtn, 'click', handleAddAllSuggestions, 'reminder-add-all');
@@ -4182,11 +4690,10 @@ function wireRemindersPage(me) {
         // Do not allow adding reminders without full data
         return;
       }
-      const allRems = store.get(remindersKey(me.email), []) || [];
-      const newRem  = { id: uid('rem'), tripId, name, date };
+      const allRems = getReminders(me.email) || [];
+      const newRem  = { id: uid('rem'), tripId, name, date, completed: false };
       const updated = [...allRems, newRem];
-      store.set(remindersKey(me.email), updated);
-      writeRemindersToSupabase(me.email, updated);
+      saveReminders(me.email, updated);
       // Clear the form fields and refresh list
       if (nameEl) nameEl.value = '';
       if (dateEl) dateEl.value = '';
@@ -4414,6 +4921,17 @@ function wirePackingPage(me) {
     renderList();
   };
   bindEventOnce(addBtn, 'click', handleAddPackingItem, 'packing-add');
+
+  bindEventOnce(window, 'wl:packing-updated', (event) => {
+    const detail = event?.detail || {};
+    if (!tripSelect.value) {
+      return;
+    }
+    if (!detail.tripId || detail.tripId !== tripSelect.value) {
+      return;
+    }
+    renderList();
+  }, 'packing-sync-listener');
 
   updateAddButtonState();
   renderList();
