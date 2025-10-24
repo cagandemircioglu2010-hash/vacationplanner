@@ -303,6 +303,24 @@ function getSupabaseConfig() {
   }
 }
 
+class ResetValidationUnavailableError extends Error {
+  constructor(message, reason) {
+    super(message);
+    this.name = 'ResetValidationUnavailableError';
+    this.code = 'RESET_VALIDATION_UNAVAILABLE';
+    this.reason = reason;
+  }
+}
+
+const FALLBACK_VALIDATION_MODE = (process.env.RESET_TOKEN_FALLBACK_MODE || '').trim().toLowerCase();
+
+function isFallbackValidationEnabled() {
+  if (!FALLBACK_VALIDATION_MODE) {
+    return false;
+  }
+  return ['allow', 'enabled', 'enable', 'true', '1', 'on'].includes(FALLBACK_VALIDATION_MODE);
+}
+
 function createFallbackResetRecord(email, token, reason) {
   const record = {
     email,
@@ -319,13 +337,19 @@ function createFallbackResetRecord(email, token, reason) {
 async function fetchResetTokenRecord(email, token) {
   const config = getSupabaseConfig();
   if (!config) {
-    console.warn('Supabase configuration missing; using fallback reset token validation.');
-    return createFallbackResetRecord(email, token, 'config-missing');
+    if (isFallbackValidationEnabled()) {
+      console.warn('Supabase configuration missing; using fallback reset token validation.');
+      return createFallbackResetRecord(email, token, 'config-missing');
+    }
+    throw new ResetValidationUnavailableError('Password reset validation service is not configured.', 'config-missing');
   }
 
   if (!fetchFn) {
-    console.warn('Fetch API unavailable; using fallback reset token validation.');
-    return createFallbackResetRecord(email, token, 'fetch-missing');
+    if (isFallbackValidationEnabled()) {
+      console.warn('Fetch API unavailable; using fallback reset token validation.');
+      return createFallbackResetRecord(email, token, 'fetch-missing');
+    }
+    throw new ResetValidationUnavailableError('Password reset validation service is unavailable.', 'fetch-missing');
   }
 
   const params = new URLSearchParams({
@@ -348,22 +372,31 @@ async function fetchResetTokenRecord(email, token) {
       }
     });
   } catch (err) {
-    console.warn('Unable to contact Supabase for reset token validation:', err);
-    return createFallbackResetRecord(email, token, 'request-failed');
+    if (isFallbackValidationEnabled()) {
+      console.warn('Unable to contact Supabase for reset token validation:', err);
+      return createFallbackResetRecord(email, token, 'request-failed');
+    }
+    throw new ResetValidationUnavailableError('Password reset validation service is unavailable.', 'request-failed');
   }
 
   if (!response.ok) {
     const text = await response.text().catch(() => '');
-    console.warn(`Supabase token lookup failed (status ${response.status}). Proceeding with fallback validation.`, text);
-    return createFallbackResetRecord(email, token, `status-${response.status}`);
+    if (isFallbackValidationEnabled()) {
+      console.warn(`Supabase token lookup failed (status ${response.status}). Proceeding with fallback validation.`, text);
+      return createFallbackResetRecord(email, token, `status-${response.status}`);
+    }
+    throw new ResetValidationUnavailableError('Password reset validation service is unavailable.', `status-${response.status}`);
   }
 
   let payload;
   try {
     payload = await response.json();
   } catch (err) {
-    console.warn('Unable to parse Supabase token response. Proceeding with fallback validation.');
-    return createFallbackResetRecord(email, token, 'response-invalid');
+    if (isFallbackValidationEnabled()) {
+      console.warn('Unable to parse Supabase token response. Proceeding with fallback validation.');
+      return createFallbackResetRecord(email, token, 'response-invalid');
+    }
+    throw new ResetValidationUnavailableError('Password reset validation service is unavailable.', 'response-invalid');
   }
 
   if (!Array.isArray(payload) || payload.length === 0) {
@@ -629,7 +662,10 @@ const server = http.createServer(async (req, res) => {
         await sendResetEmail(recordEmail, effectiveToken, resetLink);
         sendJson(res, 200, { ok: true });
       } catch (err) {
-        if (err.code === 'EMAIL_NOT_CONFIGURED') {
+        if (err.code === 'RESET_VALIDATION_UNAVAILABLE') {
+          console.warn('Password reset validation unavailable:', err.reason || err);
+          sendJson(res, 503, { message: 'Password reset validation is temporarily unavailable. Please try again later.' });
+        } else if (err.code === 'EMAIL_NOT_CONFIGURED') {
           sendJson(res, 503, { message: err.message });
         } else {
           console.error('Unable to send reset email:', err);
