@@ -144,73 +144,39 @@ const packingKey = (tripId) => `wl_pack_${tripId}`;     // [{...packing item}]
 // duplicates are removed prior to insertion.
 const recentKey = (email) => `wl_recent_${email}`;
 
-const WEATHER_CACHE_KEY = 'wl_weather_cache_v1';
-const smartPackingState = {
+const DESTINATION_CACHE_KEY = 'wl_destination_cache_v1';
+const destinationInsightState = {
   tripId: null,
   suggestions: [],
   email: null,
 };
 
-const WEATHER_CODE_DESCRIPTIONS = {
-  0: 'Clear skies',
-  1: 'Mostly clear',
-  2: 'Partly cloudy',
-  3: 'Overcast',
-  45: 'Foggy',
-  48: 'Rime fog',
-  51: 'Light drizzle',
-  53: 'Moderate drizzle',
-  55: 'Heavy drizzle',
-  56: 'Freezing drizzle',
-  57: 'Freezing drizzle',
-  61: 'Light rain',
-  63: 'Rain showers',
-  65: 'Heavy rain',
-  66: 'Freezing rain',
-  67: 'Freezing rain',
-  71: 'Light snow',
-  73: 'Snowfall',
-  75: 'Heavy snow',
-  77: 'Snow grains',
-  80: 'Light showers',
-  81: 'Rain showers',
-  82: 'Heavy showers',
-  85: 'Snow showers',
-  86: 'Snow showers',
-  95: 'Thunderstorm',
-  96: 'Thunderstorm with hail',
-  99: 'Severe thunderstorm',
-};
-
-const WEATHER_CODE_EMOJI = {
-  0: '☀️',
-  1: '🌤️',
-  2: '⛅',
-  3: '☁️',
-  45: '🌫️',
-  48: '🌫️',
-  51: '🌦️',
-  53: '🌦️',
-  55: '🌧️',
-  56: '🌧️',
-  57: '🌧️',
-  61: '🌧️',
-  63: '🌧️',
-  65: '🌧️',
-  66: '🌧️',
-  67: '🌧️',
-  71: '🌨️',
-  73: '🌨️',
-  75: '❄️',
-  77: '❄️',
-  80: '🌦️',
-  81: '🌧️',
-  82: '🌧️',
-  85: '🌨️',
-  86: '🌨️',
-  95: '⛈️',
-  96: '⛈️',
-  99: '⛈️',
+const COUNTRY_NAME_ALIASES = {
+  UK: 'United Kingdom',
+  'U.K.': 'United Kingdom',
+  'U.K': 'United Kingdom',
+  'United Kingdom of Great Britain': 'United Kingdom',
+  USA: 'United States',
+  'U.S.': 'United States',
+  'U.S': 'United States',
+  'United States of America': 'United States',
+  UAE: 'United Arab Emirates',
+  'U.A.E.': 'United Arab Emirates',
+  'U.A.E': 'United Arab Emirates',
+  'Republic of Korea': 'South Korea',
+  'Korea, South': 'South Korea',
+  'Korea (South)': 'South Korea',
+  'Korea Republic': 'South Korea',
+  'Korea, North': 'North Korea',
+  'Korea (North)': 'North Korea',
+  PRC: 'China',
+  'P.R.C.': 'China',
+  'People\'s Republic of China': 'China',
+  'Russian Federation': 'Russia',
+  'Hong Kong SAR': 'Hong Kong',
+  'Macao SAR': 'Macau',
+  'Czechia': 'Czech Republic',
+  'Viet Nam': 'Vietnam',
 };
 
 function escapeHtml(value) {
@@ -222,147 +188,173 @@ function escapeHtml(value) {
     .replace(/'/g, '&#39;');
 }
 
-function celsiusToFahrenheit(c) {
-  if (typeof c !== 'number' || Number.isNaN(c)) return null;
-  return (c * 9) / 5 + 32;
+/* Weather insight helpers removed. */
+
+function sanitiseLocation(value) {
+  return String(value ?? '')
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
-function average(values) {
-  if (!Array.isArray(values) || values.length === 0) return null;
-  const nums = values
-    .map(v => Number(v))
-    .filter(v => Number.isFinite(v));
-  if (nums.length === 0) return null;
-  const total = nums.reduce((sum, v) => sum + v, 0);
-  return total / nums.length;
+function guessCountryQuery(location) {
+  const cleaned = sanitiseLocation(location);
+  if (!cleaned) return null;
+  const parts = cleaned.split(',').map((part) => part.trim()).filter(Boolean);
+  if (parts.length === 0) return null;
+  let candidate = parts[parts.length - 1];
+  if (/^[A-Z]{2,3}$/i.test(candidate)) {
+    candidate = candidate.toUpperCase();
+  }
+  return COUNTRY_NAME_ALIASES[candidate] || candidate;
 }
 
-function mostFrequentValue(values) {
-  if (!Array.isArray(values) || values.length === 0) return null;
-  const counts = new Map();
-  values.forEach((value) => {
-    const key = Number(value);
-    if (!Number.isFinite(key)) return;
-    counts.set(key, (counts.get(key) || 0) + 1);
-  });
-  let bestKey = null;
-  let bestCount = -1;
-  counts.forEach((count, key) => {
-    if (count > bestCount) {
-      bestCount = count;
-      bestKey = key;
-    }
-  });
-  return bestKey;
-}
-
-function describeWeatherCode(code) {
-  const numeric = Number(code);
-  if (!Number.isFinite(numeric)) return 'Weather update';
-  return WEATHER_CODE_DESCRIPTIONS[numeric] || 'Weather update';
-}
-
-function weatherEmojiForCode(code) {
-  const numeric = Number(code);
-  if (!Number.isFinite(numeric)) return '🌍';
-  return WEATHER_CODE_EMOJI[numeric] || '🌍';
-}
-
-function normaliseLocationLabel(weather, trip) {
-  const apiName = weather?.location?.name ? String(weather.location.name).trim() : '';
-  const apiCountry = weather?.location?.country ? String(weather.location.country).trim() : '';
-  const tripLoc = trip?.location ? String(trip.location).trim() : '';
-  const primary = apiName || tripLoc || 'your destination';
-  return apiCountry ? `${primary}, ${apiCountry}` : primary;
-}
-
-function rememberWeatherCache(cacheKey, data) {
+function rememberDestinationCache(cacheKey, data) {
   if (!cacheKey) return;
-  const cache = store.get(WEATHER_CACHE_KEY, {}) || {};
+  const cache = store.get(DESTINATION_CACHE_KEY, {}) || {};
   cache[cacheKey] = { data, timestamp: Date.now() };
   const trimmed = Object.entries(cache)
     .sort((a, b) => (b[1]?.timestamp || 0) - (a[1]?.timestamp || 0))
-    .slice(0, 15)
+    .slice(0, 20)
     .reduce((acc, [key, value]) => {
       acc[key] = value;
       return acc;
     }, {});
-  store.set(WEATHER_CACHE_KEY, trimmed);
+  store.set(DESTINATION_CACHE_KEY, trimmed);
 }
 
-async function fetchTripWeather(trip) {
-  const location = (trip?.location || '').trim();
+async function fetchWikipediaSummaryForLocation(location) {
+  const cleaned = sanitiseLocation(location);
+  if (!cleaned) return null;
+  const queries = [cleaned];
+  const parts = cleaned.split(',').map((part) => part.trim()).filter(Boolean);
+  if (parts.length > 1) {
+    const last = parts[parts.length - 1];
+    if (!queries.includes(last)) {
+      queries.push(last);
+    }
+  }
+
+  let lastError = null;
+  for (const query of queries) {
+    const slug = encodeURIComponent(query);
+    if (!slug) continue;
+    try {
+      const res = await fetch(`https://en.wikipedia.org/api/rest_v1/page/summary/${slug}`, {
+        headers: { Accept: 'application/json' },
+      });
+      if (res.status === 404) {
+        continue;
+      }
+      if (!res.ok) {
+        throw new Error(`Summary request failed with status ${res.status}`);
+      }
+      const json = await res.json();
+      if (!json || typeof json !== 'object') {
+        continue;
+      }
+      if (json.type === 'disambiguation') {
+        continue;
+      }
+      if (json.extract || json.description) {
+        return {
+          title: json.title || query,
+          extract: json.extract || json.description || '',
+          url: json.content_urls?.desktop?.page || json.content_urls?.mobile?.page || '',
+          image: json.thumbnail?.source || json.originalimage?.source || '',
+        };
+      }
+    } catch (err) {
+      lastError = err;
+      break;
+    }
+  }
+  if (lastError) {
+    throw lastError;
+  }
+  return null;
+}
+
+async function fetchCountryDetails(location) {
+  const query = guessCountryQuery(location);
+  if (!query) return null;
+  const slug = encodeURIComponent(query);
+  const url = `https://restcountries.com/v3.1/name/${slug}?fields=name,capital,currencies,languages,region,subregion,population,flags,timezones,idd,car,tld`;
+  const res = await fetch(url, { headers: { Accept: 'application/json' } });
+  if (res.status === 404) {
+    return null;
+  }
+  if (!res.ok) {
+    throw new Error(`Country lookup failed with status ${res.status}`);
+  }
+  const json = await res.json();
+  if (!Array.isArray(json) || json.length === 0) {
+    return null;
+  }
+  const lowerQuery = query.toLowerCase();
+  const match = json.find((entry) => {
+    const common = entry?.name?.common ? String(entry.name.common).toLowerCase() : '';
+    const official = entry?.name?.official ? String(entry.name.official).toLowerCase() : '';
+    return common === lowerQuery || official === lowerQuery;
+  }) || json[0];
+
+  const currencies = Object.entries(match?.currencies || {}).map(([code, info]) => ({
+    code,
+    name: info?.name || code,
+    symbol: info?.symbol || '',
+  }));
+  const languages = Object.values(match?.languages || {}).map((lang) => String(lang));
+  const callingCode = (() => {
+    const root = match?.idd?.root || '';
+    const suffix = Array.isArray(match?.idd?.suffixes) && match.idd.suffixes.length > 0
+      ? match.idd.suffixes[0]
+      : '';
+    const joined = `${root || ''}${suffix || ''}`.trim();
+    if (!joined) return '';
+    return joined.startsWith('+') ? joined : `+${joined}`;
+  })();
+
+  return {
+    name: match?.name?.common || query,
+    officialName: match?.name?.official || '',
+    capital: Array.isArray(match?.capital) && match.capital.length > 0 ? match.capital[0] : '',
+    region: match?.region || '',
+    subregion: match?.subregion || '',
+    population: Number.isFinite(match?.population) ? match.population : null,
+    currencies,
+    languages,
+    timezones: Array.isArray(match?.timezones) ? match.timezones : [],
+    callingCode,
+    drivingSide: match?.car?.side || '',
+    flagSvg: match?.flags?.svg || '',
+    flagPng: match?.flags?.png || '',
+    tlds: Array.isArray(match?.tld) ? match.tld : [],
+  };
+}
+
+async function fetchDestinationInsights(trip) {
+  const location = sanitiseLocation(trip?.location || '');
   if (!location) {
     return null;
   }
-  const startDate = trip.startDate || trip.start_date;
-  const endDate = trip.endDate || trip.end_date || startDate;
-  if (!startDate || !endDate) {
-    return null;
-  }
 
-  const cacheKey = `${location.toLowerCase()}|${startDate}|${endDate}`;
-  const cache = store.get(WEATHER_CACHE_KEY, {}) || {};
+  const cacheKey = location.toLowerCase();
+  const cache = store.get(DESTINATION_CACHE_KEY, {}) || {};
   const cached = cache[cacheKey];
-  const SIX_HOURS = 1000 * 60 * 60 * 6;
-  if (cached && Date.now() - Number(cached.timestamp || 0) < SIX_HOURS) {
+  const TWELVE_HOURS = 1000 * 60 * 60 * 12;
+  if (cached && Date.now() - Number(cached.timestamp || 0) < TWELVE_HOURS) {
     return cached.data;
   }
 
   try {
-    const geoUrl = `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(location)}&count=1&language=en&format=json`;
-    const geoRes = await fetch(geoUrl);
-    if (!geoRes.ok) {
-      throw new Error(`Geocoding request failed with status ${geoRes.status}`);
-    }
-    const geoJson = await geoRes.json();
-    const match = Array.isArray(geoJson?.results) ? geoJson.results[0] : null;
-    if (!match || typeof match.latitude !== 'number' || typeof match.longitude !== 'number') {
-      throw new Error('No matching location found');
-    }
-    const timezone = match.timezone || 'auto';
-    const forecastUrl = `https://api.open-meteo.com/v1/forecast?latitude=${match.latitude}&longitude=${match.longitude}&daily=weathercode,temperature_2m_max,temperature_2m_min,precipitation_probability_max&timezone=${encodeURIComponent(timezone)}&start_date=${startDate}&end_date=${endDate}`;
-    const weatherRes = await fetch(forecastUrl);
-    if (!weatherRes.ok) {
-      throw new Error(`Forecast request failed with status ${weatherRes.status}`);
-    }
-    const weatherJson = await weatherRes.json();
-    const daily = weatherJson?.daily || {};
-    const max = Array.isArray(daily.temperature_2m_max) ? daily.temperature_2m_max : [];
-    const min = Array.isArray(daily.temperature_2m_min) ? daily.temperature_2m_min : [];
-    const precipitation = Array.isArray(daily.precipitation_probability_max) ? daily.precipitation_probability_max : [];
-    const codes = Array.isArray(daily.weathercode) ? daily.weathercode : [];
-    if (max.length === 0 || min.length === 0) {
-      throw new Error('No forecast data available for selected dates');
-    }
-    const data = {
-      location: {
-        name: match.name || location,
-        country: match.country || match.admin1 || '',
-        timezone: weatherJson?.timezone || timezone,
-      },
-      range: { start: startDate, end: endDate },
-      stats: {
-        avgMax: average(max),
-        avgMin: average(min),
-        hi: Math.max(...max.map(Number)),
-        lo: Math.min(...min.map(Number)),
-        precipChance: precipitation.length > 0 ? Math.max(...precipitation.map((n) => Number(n) || 0)) : 0,
-        dominantCode: mostFrequentValue(codes),
-        maxSeries: max,
-        minSeries: min,
-        precipitationSeries: precipitation,
-        codes,
-      },
-      units: {
-        temperature: weatherJson?.daily_units?.temperature_2m_max || '°C',
-        precipitationProbability: weatherJson?.daily_units?.precipitation_probability_max || '%',
-      },
-    };
-    rememberWeatherCache(cacheKey, data);
+    const [summary, country] = await Promise.all([
+      fetchWikipediaSummaryForLocation(location),
+      fetchCountryDetails(location),
+    ]);
+    const data = { location, summary, country };
+    rememberDestinationCache(cacheKey, data);
     return data;
   } catch (err) {
-    console.error('Weather fetch failed:', err);
+    console.error('Destination insights fetch failed:', err);
     if (cached?.data) {
       return cached.data;
     }
@@ -370,65 +362,195 @@ async function fetchTripWeather(trip) {
   }
 }
 
-function buildPackingSuggestions(weather, trip) {
-  const suggestions = new Set(['Travel documents', 'Portable charger', 'Reusable water bottle']);
-  const stats = weather?.stats || {};
-  const avgMax = typeof stats.avgMax === 'number' ? stats.avgMax : null;
-  const avgMin = typeof stats.avgMin === 'number' ? stats.avgMin : null;
-  const precipChance = typeof stats.precipChance === 'number' ? stats.precipChance : 0;
-  const codes = Array.isArray(stats.codes) ? stats.codes.map((c) => Number(c)) : [];
-  const tripLength = trip?.days || (() => {
-    const start = new Date(trip?.startDate || trip?.start_date || weather?.range?.start);
-    const end = new Date(trip?.endDate || trip?.end_date || weather?.range?.end);
-    if (Number.isNaN(start.valueOf()) || Number.isNaN(end.valueOf())) return null;
-    const diff = Math.round((end - start) / (1000 * 60 * 60 * 24)) + 1;
-    return diff > 0 ? diff : null;
-  })();
+function formatCurrencyList(country) {
+  const list = Array.isArray(country?.currencies) ? country.currencies : [];
+  if (list.length === 0) return '';
+  return list.map((curr) => {
+    const symbol = curr.symbol ? ` (${curr.symbol})` : '';
+    return curr.name ? `${curr.name}${symbol}` : curr.code;
+  }).filter(Boolean).join(', ');
+}
 
-  if (avgMax != null) {
-    if (avgMax >= 27) {
-      suggestions.add('Lightweight, breathable clothing');
-      suggestions.add('High-SPF sunscreen');
-      suggestions.add('Sun hat or cap');
-    } else if (avgMax <= 10) {
-      suggestions.add('Insulated jacket or coat');
-      suggestions.add('Thermal base layers');
+function formatLanguageList(country) {
+  const list = Array.isArray(country?.languages) ? country.languages : [];
+  if (list.length === 0) return '';
+  return list.join(', ');
+}
+
+function renderDestinationCard(container, insights, trip) {
+  if (!container) return;
+  container.innerHTML = '';
+
+  const wrap = document.createElement('div');
+  wrap.className = 'space-y-4';
+
+  const header = document.createElement('div');
+  header.className = 'flex items-start gap-3';
+  const badge = document.createElement('div');
+  badge.className = 'w-12 h-12 rounded-full bg-primary/10 dark:bg-primary/20 flex items-center justify-center overflow-hidden';
+  const country = insights?.country;
+  if (country?.flagPng || country?.flagSvg) {
+    const flag = document.createElement('img');
+    flag.src = country.flagSvg || country.flagPng;
+    flag.alt = country?.name ? `Flag of ${country.name}` : 'Destination flag';
+    flag.className = 'w-full h-full object-cover';
+    badge.appendChild(flag);
+  } else {
+    const icon = document.createElement('span');
+    icon.className = 'text-2xl';
+    icon.textContent = '🌍';
+    badge.appendChild(icon);
+  }
+
+  const titleWrap = document.createElement('div');
+  const label = document.createElement('p');
+  label.className = 'text-xs uppercase tracking-wide text-slate-500 dark:text-slate-400';
+  label.textContent = 'Destination snapshot';
+  const title = document.createElement('p');
+  title.className = 'text-lg font-semibold text-slate-900 dark:text-white';
+  const summaryTitle = insights?.summary?.title || trip?.name || trip?.location || 'Your destination';
+  title.textContent = summaryTitle;
+  const subtitle = document.createElement('p');
+  subtitle.className = 'text-sm text-slate-500 dark:text-slate-400';
+  subtitle.textContent = country?.name || sanitiseLocation(trip?.location) || 'Upcoming adventure';
+  titleWrap.append(label, title, subtitle);
+  header.append(badge, titleWrap);
+
+  const summaryText = document.createElement('p');
+  summaryText.className = 'text-sm text-slate-600 dark:text-slate-300';
+  summaryText.textContent = insights?.summary?.extract || 'We\'re gathering quick facts to help you get ready.';
+  wrap.append(header, summaryText);
+
+  if (insights?.summary?.url) {
+    const link = document.createElement('a');
+    link.href = insights.summary.url;
+    link.target = '_blank';
+    link.rel = 'noopener';
+    link.className = 'inline-flex items-center gap-1 text-sm text-primary hover:underline';
+    link.textContent = 'Read more on Wikipedia';
+    const icon = document.createElement('span');
+    icon.className = 'material-symbols-outlined text-sm';
+    icon.textContent = 'open_in_new';
+    link.appendChild(icon);
+    wrap.appendChild(link);
+  }
+
+  const detailList = document.createElement('ul');
+  detailList.className = 'grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm text-slate-700 dark:text-slate-200';
+
+  const addDetail = (labelText, valueText) => {
+    if (!valueText) return;
+    const item = document.createElement('li');
+    item.className = 'flex items-start justify-between gap-2';
+    const labelEl = document.createElement('span');
+    labelEl.className = 'font-medium text-slate-600 dark:text-slate-300';
+    labelEl.textContent = labelText;
+    const valueEl = document.createElement('span');
+    valueEl.className = 'text-right';
+    valueEl.textContent = valueText;
+    item.append(labelEl, valueEl);
+    detailList.appendChild(item);
+  };
+
+  addDetail('Capital', country?.capital || '');
+  addDetail('Region', country?.subregion || country?.region || '');
+  addDetail('Currencies', formatCurrencyList(country));
+  addDetail('Languages', formatLanguageList(country));
+  addDetail('Time zone', Array.isArray(country?.timezones) && country.timezones.length > 0 ? country.timezones[0] : '');
+  if (Number.isFinite(country?.population) && country.population > 0) {
+    addDetail('Population', country.population.toLocaleString());
+  }
+  if (country?.callingCode) {
+    addDetail('Dialling code', country.callingCode);
+  }
+
+  if (detailList.childElementCount > 0) {
+    wrap.appendChild(detailList);
+  }
+
+  const source = document.createElement('p');
+  source.className = 'text-xs text-slate-400 dark:text-slate-500';
+  source.textContent = 'Information provided by Wikipedia and REST Countries.';
+  wrap.appendChild(source);
+
+  container.appendChild(wrap);
+}
+
+function buildDestinationPackingSuggestions(insights, trip) {
+  const suggestions = new Set(['Travel documents', 'Portable charger', 'Reusable water bottle']);
+  const country = insights?.country || {};
+  const currencies = Array.isArray(country.currencies) ? country.currencies : [];
+  if (currencies.length > 0) {
+    const names = currencies.map((curr) => curr.name || curr.code).filter(Boolean);
+    if (names.length > 0) {
+      suggestions.add(`Local cash (${names.join(', ')})`);
     }
   }
 
-  if (avgMin != null && avgMin <= 5) {
-    suggestions.add('Warm socks and gloves');
-    suggestions.add('Scarf or neck gaiter');
-  } else if (avgMin != null && avgMin >= 18) {
-    suggestions.add('Light sleepwear');
+  const languages = Array.isArray(country.languages) ? country.languages : [];
+  const speaksEnglish = languages.some((lang) => /english/i.test(lang));
+  if (languages.length > 0 && !speaksEnglish) {
+    suggestions.add(`Phrasebook or translation app (${languages[0]})`);
   }
 
-  if (precipChance >= 50) {
-    suggestions.add('Compact travel umbrella');
-    suggestions.add('Waterproof jacket or poncho');
-  } else if (precipChance >= 30) {
-    suggestions.add('Water-resistant outer layer');
+  if (country.region && !/americas/i.test(country.region)) {
+    suggestions.add('Universal power adapter');
   }
 
-  if (codes.some((code) => [71, 73, 75, 77, 85, 86].includes(code))) {
-    suggestions.add('Waterproof boots');
-    suggestions.add('Thermal gloves');
+  if (country.drivingSide === 'left') {
+    suggestions.add('International driving permit');
   }
 
-  if (codes.some((code) => [95, 96, 99].includes(code))) {
-    suggestions.add('Weather alert app for thunderstorms');
+  if (country.callingCode) {
+    suggestions.add(`Emergency contact card (${country.callingCode})`);
   }
 
-  if (tripLength && tripLength >= 7) {
-    suggestions.add('Travel-sized laundry kit');
-    suggestions.add('Extra set of casual outfits');
+  if (insights?.summary?.title) {
+    suggestions.add(`Travel guide for ${insights.summary.title}`);
   }
 
-  if (tripLength && tripLength >= 3 && avgMax != null && avgMin != null && Math.abs(avgMax - avgMin) >= 10) {
-    suggestions.add('Layer-friendly outfits');
+  const tripName = trip?.name || trip?.location;
+  if (tripName && tripName.length > 20) {
+    suggestions.add('Printed itinerary and reservation copies');
   }
 
   return Array.from(suggestions);
+}
+
+function renderTravelTips(container, suggestions, trip) {
+  if (!container) return;
+  container.innerHTML = '';
+
+  if (!Array.isArray(suggestions) || suggestions.length === 0) {
+    const msg = document.createElement('p');
+    msg.className = 'text-sm opacity-70';
+    msg.textContent = 'Add an upcoming trip to see personalised travel tips.';
+    container.appendChild(msg);
+    return;
+  }
+
+  const tripName = trip?.name || trip?.location;
+  const intro = document.createElement('p');
+  intro.className = 'text-sm text-slate-600 dark:text-slate-300';
+  intro.textContent = tripName
+    ? `Travel prep suggestions for ${tripName}:`
+    : 'Travel prep suggestions for your trip:';
+  container.appendChild(intro);
+
+  const list = document.createElement('ul');
+  list.className = 'space-y-2';
+  suggestions.forEach((suggestion) => {
+    const item = document.createElement('li');
+    item.className = 'flex items-center gap-3 text-sm text-slate-700 dark:text-slate-200';
+    const icon = document.createElement('span');
+    icon.className = 'material-symbols-outlined text-primary text-base';
+    icon.textContent = 'check_circle';
+    const text = document.createElement('span');
+    text.textContent = suggestion;
+    item.append(icon, text);
+    list.appendChild(item);
+  });
+  container.appendChild(list);
 }
 
 function applySmartPackingSuggestions(tripId, suggestions) {
@@ -1830,129 +1952,14 @@ function createReminderCard(reminder) {
   return card;
 }
 
-function renderWeatherCard(container, weather, trip) {
-  if (!container) return;
-  container.innerHTML = '';
 
-  const wrap = document.createElement('div');
-  wrap.className = 'space-y-4';
-
-  const header = document.createElement('div');
-  header.className = 'flex items-start gap-3';
-  const emoji = document.createElement('span');
-  emoji.className = 'text-4xl';
-  emoji.textContent = weatherEmojiForCode(weather?.stats?.dominantCode);
-  const titleWrap = document.createElement('div');
-  const label = document.createElement('p');
-  label.className = 'text-xs uppercase tracking-wide text-slate-500 dark:text-slate-400';
-  label.textContent = 'Weather outlook';
-  const title = document.createElement('p');
-  title.className = 'text-lg font-semibold text-slate-900 dark:text-white';
-  title.textContent = describeWeatherCode(weather?.stats?.dominantCode);
-  const subtitle = document.createElement('p');
-  subtitle.className = 'text-sm text-slate-500 dark:text-slate-400';
-  subtitle.textContent = `Forecast for ${normaliseLocationLabel(weather, trip)}`;
-  titleWrap.append(label, title, subtitle);
-  header.append(emoji, titleWrap);
-
-  const statsList = document.createElement('ul');
-  statsList.className = 'grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm text-slate-700 dark:text-slate-200';
-
-  const formatTemp = (value) => {
-    if (typeof value !== 'number' || Number.isNaN(value)) {
-      return '—';
-    }
-    const rounded = Math.round(value);
-    const fahrenheit = celsiusToFahrenheit(value);
-    if (typeof fahrenheit === 'number' && Number.isFinite(fahrenheit)) {
-      return `${rounded}°C (${Math.round(fahrenheit)}°F)`;
-    }
-    return `${rounded}°C`;
-  };
-
-  const addStat = (labelText, valueText) => {
-    const item = document.createElement('li');
-    item.className = 'flex items-start justify-between gap-2';
-    const labelEl = document.createElement('span');
-    labelEl.className = 'font-medium text-slate-600 dark:text-slate-300';
-    labelEl.textContent = labelText;
-    const valueEl = document.createElement('span');
-    valueEl.className = 'text-right';
-    valueEl.textContent = valueText;
-    item.append(labelEl, valueEl);
-    statsList.appendChild(item);
-  };
-
-  const stats = weather?.stats || {};
-  const avgMax = typeof stats.avgMax === 'number' ? stats.avgMax : null;
-  const avgMin = typeof stats.avgMin === 'number' ? stats.avgMin : null;
-  const hi = typeof stats.hi === 'number' ? stats.hi : null;
-  const lo = typeof stats.lo === 'number' ? stats.lo : null;
-  const precip = typeof stats.precipChance === 'number' ? stats.precipChance : null;
-
-  if (avgMax != null && avgMin != null) {
-    addStat('Average high/low', `${formatTemp(avgMax)} / ${formatTemp(avgMin)}`);
-  }
-  if (hi != null && lo != null) {
-    addStat('Temperature range', `${formatTemp(lo)} → ${formatTemp(hi)}`);
-  }
-  if (precip != null) {
-    addStat('Rain chance', `${Math.round(Math.max(0, Math.min(100, precip)))}%`);
-  }
-  if (weather?.range?.start && weather?.range?.end) {
-    addStat('Trip dates', `${weather.range.start} → ${weather.range.end}`);
-  }
-
-  const source = document.createElement('p');
-  source.className = 'text-xs text-slate-400 dark:text-slate-500';
-  source.textContent = 'Forecast data provided by Open-Meteo.';
-
-  wrap.append(header, statsList, source);
-  container.appendChild(wrap);
-}
-
-function renderPackingSuggestions(container, suggestions, trip) {
-  if (!container) return;
-  container.innerHTML = '';
-
-  if (!Array.isArray(suggestions) || suggestions.length === 0) {
-    const msg = document.createElement('p');
-    msg.className = 'text-sm opacity-70';
-    msg.textContent = 'No weather-aware suggestions yet. Check back once forecast data is available.';
-    container.appendChild(msg);
-    return;
-  }
-
-  const intro = document.createElement('p');
-  intro.className = 'text-sm text-slate-600 dark:text-slate-300 mb-3';
-  const tripName = trip?.name ? String(trip.name).trim() : '';
-  intro.textContent = tripName
-    ? `Smart recommendations for ${tripName}:`
-    : 'Smart recommendations for your trip:';
-  container.appendChild(intro);
-
-  const list = document.createElement('ul');
-  list.className = 'space-y-2';
-  suggestions.forEach((suggestion) => {
-    const item = document.createElement('li');
-    item.className = 'flex items-center gap-3 text-sm text-slate-700 dark:text-slate-200';
-    const icon = document.createElement('span');
-    icon.className = 'material-symbols-outlined text-primary text-base';
-    icon.textContent = 'check_circle';
-    const text = document.createElement('span');
-    text.textContent = suggestion;
-    item.append(icon, text);
-    list.appendChild(item);
-  });
-  container.appendChild(list);
-}
 
 function renderDestinationInsightsSection(trip, email) {
-  const weatherEl = qs('#home-weather-card');
-  const packingEl = qs('#home-smart-packing');
-  const applyBtn = qs('#home-smart-packing-apply');
-  const feedbackEl = qs('#home-smart-packing-feedback');
-  if (!weatherEl || !packingEl) return;
+  const destinationEl = qs('#home-destination-card');
+  const tipsEl = qs('#home-travel-tips');
+  const applyBtn = qs('#home-travel-tips-apply');
+  const feedbackEl = qs('#home-travel-tips-feedback');
+  if (!destinationEl || !tipsEl) return;
 
   const colourClasses = [
     'text-green-600', 'dark:text-green-400',
@@ -1996,56 +2003,56 @@ function renderDestinationInsightsSection(trip, email) {
     applyBtn.classList.remove('opacity-50', 'cursor-not-allowed');
   };
 
-  smartPackingState.tripId = null;
-  smartPackingState.suggestions = [];
-  smartPackingState.email = email || null;
+  destinationInsightState.tripId = null;
+  destinationInsightState.suggestions = [];
+  destinationInsightState.email = email || null;
   resetFeedback();
 
   if (applyBtn) {
     bindEventOnce(applyBtn, 'click', (ev) => {
       ev.preventDefault();
-      const { tripId, suggestions } = smartPackingState;
+      const { tripId, suggestions } = destinationInsightState;
       if (!tripId || !Array.isArray(suggestions) || suggestions.length === 0) {
-        showFeedback('Smart suggestions are still loading. Please try again shortly.', 'warning');
+        showFeedback('Travel tips are still loading. Please try again shortly.', 'warning');
         return;
       }
       const added = applySmartPackingSuggestions(tripId, suggestions);
       if (added > 0) {
-        showFeedback(`Added ${added} smart item${added === 1 ? '' : 's'} to your packing list.`, 'success');
+        showFeedback(`Added ${added} travel tip${added === 1 ? '' : 's'} to your packing list.`, 'success');
       } else {
         showFeedback('All suggested items are already on your packing list.', 'warning');
       }
-    }, 'smart-pack-apply');
+    }, 'travel-tips-apply');
   }
 
   if (!trip) {
-    weatherEl.innerHTML = '<p class="text-sm opacity-70">Add an upcoming trip to see the latest weather outlook.</p>';
-    packingEl.innerHTML = '<p class="text-sm opacity-70">Weather-aware packing tips will appear here once a destination is selected.</p>';
+    destinationEl.innerHTML = '<p class="text-sm opacity-70">Add an upcoming trip to see a destination snapshot.</p>';
+    tipsEl.innerHTML = '<p class="text-sm opacity-70">Personalised travel tips will appear here once a destination is selected.</p>';
     disableApplyButton();
     return;
   }
 
-  weatherEl.dataset.tripId = trip.id || '';
-  weatherEl.innerHTML = `<p class="text-sm opacity-70">Fetching weather data for ${escapeHtml(trip.location || trip.name || 'your trip')}…</p>`;
-  packingEl.innerHTML = '<p class="text-sm opacity-70">Analysing the forecast for smart packing suggestions…</p>';
+  destinationEl.dataset.tripId = trip.id || '';
+  destinationEl.innerHTML = `<p class="text-sm opacity-70">Gathering destination insights for ${escapeHtml(trip.location || trip.name || 'your trip')}…</p>`;
+  tipsEl.innerHTML = '<p class="text-sm opacity-70">Collecting tailored travel tips…</p>';
   disableApplyButton();
 
-  fetchTripWeather(trip).then((weather) => {
-    if ((weatherEl.dataset.tripId || '') !== (trip.id || '')) {
+  fetchDestinationInsights(trip).then((insights) => {
+    if ((destinationEl.dataset.tripId || '') !== (trip.id || '')) {
       return;
     }
-    if (!weather) {
-      weatherEl.innerHTML = '<p class="text-sm text-red-500">Live weather is unavailable for this destination.</p>';
-      packingEl.innerHTML = '<p class="text-sm opacity-70">Weather-aware packing tips are unavailable.</p>';
+    if (!insights) {
+      destinationEl.innerHTML = '<p class="text-sm text-red-500">Live destination data is unavailable right now.</p>';
+      tipsEl.innerHTML = '<p class="text-sm opacity-70">Travel tips are unavailable for this destination.</p>';
       disableApplyButton();
       return;
     }
-    renderWeatherCard(weatherEl, weather, trip);
-    const suggestions = buildPackingSuggestions(weather, trip);
-    renderPackingSuggestions(packingEl, suggestions, trip);
-    smartPackingState.tripId = trip.id || null;
-    smartPackingState.suggestions = suggestions;
-    smartPackingState.email = email || null;
+    renderDestinationCard(destinationEl, insights, trip);
+    const suggestions = buildDestinationPackingSuggestions(insights, trip);
+    renderTravelTips(tipsEl, suggestions, trip);
+    destinationInsightState.tripId = trip.id || null;
+    destinationInsightState.suggestions = suggestions;
+    destinationInsightState.email = email || null;
     if (Array.isArray(suggestions) && suggestions.length > 0) {
       enableApplyButton();
     } else {
@@ -2053,11 +2060,11 @@ function renderDestinationInsightsSection(trip, email) {
     }
   }).catch((err) => {
     console.error('Unable to render destination insights:', err);
-    if ((weatherEl.dataset.tripId || '') !== (trip.id || '')) {
+    if ((destinationEl.dataset.tripId || '') !== (trip.id || '')) {
       return;
     }
-    weatherEl.innerHTML = '<p class="text-sm text-red-500">We couldn\'t load the forecast right now.</p>';
-    packingEl.innerHTML = '<p class="text-sm opacity-70">Smart packing suggestions are unavailable at the moment.</p>';
+    destinationEl.innerHTML = '<p class="text-sm text-red-500">We couldn\'t load destination insights right now.</p>';
+    tipsEl.innerHTML = '<p class="text-sm opacity-70">Personalised travel tips are unavailable at the moment.</p>';
     disableApplyButton();
   });
 }
