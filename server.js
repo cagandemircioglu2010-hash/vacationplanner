@@ -173,8 +173,13 @@ async function sendSmtpMail(options) {
   const allowInsecure = options.allowInsecure || false;
   const clientName = options.clientName || os.hostname() || 'localhost';
 
+  const directTlsOptions = { host, port, servername: host };
+  if (typeof options.rejectUnauthorized === 'boolean') {
+    directTlsOptions.rejectUnauthorized = options.rejectUnauthorized;
+  }
+
   let socket = preferTls
-    ? tls.connect({ host, port, servername: host })
+    ? tls.connect(directTlsOptions)
     : net.connect({ host, port });
 
   await once(socket, preferTls ? 'secureConnect' : 'connect');
@@ -198,8 +203,12 @@ async function sendSmtpMail(options) {
         if (!response.startsWith('220')) {
           throw new Error(`STARTTLS failed: ${response.trim()}`);
         }
+        const startTlsOptions = { socket: activeSocket, servername: host };
+        if (typeof options.rejectUnauthorized === 'boolean') {
+          startTlsOptions.rejectUnauthorized = options.rejectUnauthorized;
+        }
         activeSocket.removeAllListeners();
-        activeSocket = tls.connect({ socket: activeSocket, servername: host });
+        activeSocket = tls.connect(startTlsOptions);
         await once(activeSocket, 'secureConnect');
         reader = createResponseReader(activeSocket);
         await sendCommand(activeSocket, `EHLO ${clientName}\r\n`);
@@ -281,13 +290,20 @@ function getEmailConfig() {
   const pass = process.env.SMTP_PASS || '';
   const from = process.env.EMAIL_FROM || '';
   const fromName = process.env.EMAIL_FROM_NAME || '';
+  const rejectUnauthorizedEnv = (process.env.SMTP_TLS_REJECT_UNAUTHORIZED || '').trim().toLowerCase();
+  let rejectUnauthorized;
+  if (rejectUnauthorizedEnv === 'true') {
+    rejectUnauthorized = true;
+  } else if (rejectUnauthorizedEnv === 'false') {
+    rejectUnauthorized = false;
+  }
   if (!host || !port || !from) {
     return null;
   }
   if ((user && !pass) || (!user && pass)) {
     throw new Error('Both SMTP_USER and SMTP_PASS must be provided together.');
   }
-  return { host, port, secure, allowInsecure, user, pass, from, fromName };
+  return { host, port, secure, allowInsecure, user, pass, from, fromName, rejectUnauthorized };
 }
 
 function getSupabaseConfig() {
@@ -542,6 +558,7 @@ async function sendResetEmail({ email, token, resetUrl, expiresAt }) {
     port: config.port,
     secure: config.secure,
     allowInsecure: config.allowInsecure,
+    rejectUnauthorized: config.rejectUnauthorized,
     user: config.user,
     pass: config.pass,
     from: fromHeader,
