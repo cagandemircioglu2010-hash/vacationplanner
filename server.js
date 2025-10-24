@@ -6,6 +6,7 @@ const url = require('url');
 const net = require('net');
 const tls = require('tls');
 const { once } = require('events');
+const crypto = require('crypto');
 
 const {
   ERROR_FORBIDDEN,
@@ -338,6 +339,109 @@ function createFallbackResetRecord(email, token, reason) {
   return record;
 }
 
+function generateResetToken(byteLength = 24) {
+  const length = Number.isFinite(byteLength) && byteLength > 0 ? Math.floor(byteLength) : 24;
+  const bytes = crypto.randomBytes(Math.max(8, length));
+  return bytes
+    .toString('base64')
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_')
+    .replace(/=+$/g, '');
+}
+
+async function removeExistingSupabaseTokens(email, config) {
+  if (!fetchFn) {
+    return;
+  }
+  const params = new URLSearchParams({ email: `eq.${email}` });
+  const endpoint = `${config.url}/rest/v1/reset_tokens?${params.toString()}`;
+  try {
+    const response = await fetchFn(endpoint, {
+      method: 'DELETE',
+      headers: {
+        apikey: config.key,
+        Authorization: `Bearer ${config.key}`,
+        Prefer: 'return=minimal'
+      }
+    });
+    if (!response.ok && response.status !== 404) {
+      const text = await response.text().catch(() => '');
+      console.warn(`Supabase token cleanup failed (status ${response.status}).`, text);
+    }
+  } catch (err) {
+    console.warn('Unable to remove existing Supabase reset tokens:', err);
+  }
+}
+
+async function storeSupabaseResetToken(email, token, expiresAtIso, config) {
+  if (!fetchFn) {
+    return null;
+  }
+  const payload = { email, token, expires_at: expiresAtIso };
+  const response = await fetchFn(`${config.url}/rest/v1/reset_tokens`, {
+    method: 'POST',
+    headers: {
+      apikey: config.key,
+      Authorization: `Bearer ${config.key}`,
+      'Content-Type': 'application/json',
+      Prefer: 'return=representation'
+    },
+    body: JSON.stringify(payload)
+  });
+
+  if (!response.ok) {
+    const text = await response.text().catch(() => '');
+    throw new Error(`Supabase insert failed (status ${response.status}). ${text}`);
+  }
+
+  try {
+    const data = await response.json();
+    if (Array.isArray(data) && data.length > 0) {
+      return data[0];
+    }
+    if (data && typeof data === 'object') {
+      return data;
+    }
+  } catch (err) {
+    console.warn('Unable to parse Supabase insert response. Using fallback payload.');
+  }
+  return payload;
+}
+
+async function ensureResetTokenRecord(email, token) {
+  const expiresAtIso = new Date(Date.now() + FALLBACK_TOKEN_TTL_MS).toISOString();
+  const config = getSupabaseConfig();
+
+  if (!config) {
+    console.warn('Supabase configuration missing; creating reset token in fallback mode.');
+    return createFallbackResetRecord(email, token, 'config-missing');
+  }
+
+  if (!fetchFn) {
+    console.warn('Fetch API unavailable; creating reset token in fallback mode.');
+    return createFallbackResetRecord(email, token, 'fetch-missing');
+  }
+
+  await removeExistingSupabaseTokens(email, config);
+
+  try {
+    const record = await storeSupabaseResetToken(email, token, expiresAtIso, config);
+    if (record && record.expires_at) {
+      return record;
+    }
+    const normalizedRecord = record && typeof record === 'object'
+      ? { ...record }
+      : { email, token };
+    if (!normalizedRecord.expires_at) {
+      normalizedRecord.expires_at = expiresAtIso;
+    }
+    return normalizedRecord;
+  } catch (err) {
+    console.warn('Unable to persist reset token to Supabase. Falling back to in-memory token handling.', err);
+    return createFallbackResetRecord(email, token, 'store-failed');
+  }
+}
+
 async function fetchResetTokenRecord(email, token) {
   const config = getSupabaseConfig();
   if (!config) {
@@ -639,32 +743,47 @@ const server = http.createServer(async (req, res) => {
         return;
       }
       const email = typeof body?.email === 'string' ? body.email.trim().toLowerCase() : '';
-      const token = typeof body?.token === 'string' ? body.token.trim() : '';
-      if (!email || !token) {
-        sendJson(res, 400, { message: 'Email and token are required.' });
+      let token = typeof body?.token === 'string' ? body.token.trim() : '';
+      if (!email) {
+        sendJson(res, 400, { message: 'Email is required.' });
         return;
       }
       try {
-        const record = await fetchResetTokenRecord(email, token);
-        if (!record) {
-          sendJson(res, 400, { message: 'Reset token is invalid or does not exist.' });
-          return;
+        let record;
+        const tokenProvided = Boolean(token);
+
+        if (tokenProvided) {
+          record = await fetchResetTokenRecord(email, token);
+          if (!record) {
+            sendJson(res, 400, { message: 'Reset token is invalid or does not exist.' });
+            return;
+          }
+        } else {
+          token = generateResetToken();
+          record = await ensureResetTokenRecord(email, token);
         }
-        const recordEmail = typeof record.email === 'string' && record.email.trim()
+
+        const recordEmail = typeof record?.email === 'string' && record.email.trim()
           ? record.email.trim().toLowerCase()
           : email;
-        const effectiveToken = typeof record.token === 'string' && record.token.trim()
+        const effectiveToken = typeof record?.token === 'string' && record.token.trim()
           ? record.token.trim()
           : token;
+
         if (!/^[A-Za-z0-9_-]{8,}$/.test(effectiveToken)) {
           sendJson(res, 400, { message: 'Reset token is invalid or does not exist.' });
           return;
         }
-        const expiresAtMs = record.expires_at ? Date.parse(record.expires_at) : NaN;
-        if (Number.isNaN(expiresAtMs) || expiresAtMs < Date.now()) {
+
+        const expiresAtMs = record?.expires_at ? Date.parse(record.expires_at) : NaN;
+        if (tokenProvided && (Number.isNaN(expiresAtMs) || expiresAtMs < Date.now())) {
           sendJson(res, 400, { message: 'Reset token has expired. Please request a new one.' });
           return;
         }
+
+        const normalizedExpiresAt = Number.isNaN(expiresAtMs)
+          ? new Date(Date.now() + FALLBACK_TOKEN_TTL_MS).toISOString()
+          : new Date(expiresAtMs).toISOString();
 
         const builtResetLink = buildResetLink(req, recordEmail, effectiveToken);
         const providedResetUrl = normalizeProvidedResetUrl(body?.resetUrl, recordEmail, effectiveToken, builtResetLink);
@@ -673,7 +792,7 @@ const server = http.createServer(async (req, res) => {
           email: recordEmail,
           token: effectiveToken,
           resetUrl: resetLink,
-          expiresAt: record.expires_at
+          expiresAt: normalizedExpiresAt
         });
         sendJson(res, 200, { ok: true });
       } catch (err) {
