@@ -21,26 +21,6 @@
 
 /* START OF ORIGINAL APP CODE */
 
-  // Global error handler: surface uncaught exceptions on the page.
-  // When an error bubbles to the window, this listener prepends a
-  // descriptive banner to the document body so errors are visible
-  // without developer tools.  The banner includes the message and
-  // uses a red background to draw attention.  This should be
-  // removed for production deployments.
-  window.addEventListener('error', function (e) {
-    try {
-      const errMsg = document.createElement('div');
-      errMsg.style.backgroundColor = '#fee';
-      errMsg.style.color = '#900';
-      errMsg.style.padding = '8px';
-      errMsg.style.border = '1px solid #900';
-      errMsg.style.margin = '4px';
-      errMsg.style.fontFamily = 'monospace';
-      errMsg.textContent = 'Uncaught error: ' + (e.message || e);
-      document.body.prepend(errMsg);
-    } catch {}
-  });
-
 // ---------- Utilities ----------
 const qs  = (sel, root = document) => root.querySelector(sel);
 const qsa = (sel, root = document) => Array.from(root.querySelectorAll(sel));
