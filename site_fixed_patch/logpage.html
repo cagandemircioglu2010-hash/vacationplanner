@@ -125,6 +125,15 @@
             <p class="font-bold">Password updated</p>
             <p id="reset-success-text">Your password has been reset. You can now sign in with your new password.</p>
         </div>
+        <div id="reset-fallback" class="bg-blue-50 dark:bg-blue-900/30 border-l-4 border-blue-400 dark:border-blue-500 text-blue-800 dark:text-blue-200 p-4 rounded-lg hidden" role="status">
+            <p class="font-semibold">Email delivery is unavailable right now.</p>
+            <p class="mt-2 text-sm">Use this one-time reset code to continue:</p>
+            <div class="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-3">
+                <code id="reset-fallback-code" class="flex-1 px-3 py-2 bg-white dark:bg-slate-900 rounded-lg border border-blue-200 dark:border-blue-600 font-mono text-base break-all"></code>
+                <button id="reset-fallback-copy" type="button" class="inline-flex items-center justify-center px-3 py-2 text-sm font-semibold text-white bg-primary hover:bg-primary/90 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary focus:ring-offset-background-light dark:focus:ring-offset-background-dark rounded-lg">Copy code</button>
+            </div>
+            <p id="reset-fallback-notice" class="mt-2 text-xs text-blue-700 dark:text-blue-300">We saved this code for you below. Enter it along with your new password.</p>
+        </div>
         <div id="reset-error" class="bg-red-100 border-l-4 border-red-500 text-red-700 p-4 rounded-lg hidden" role="alert">
             <p class="font-bold">Hmm...</p>
             <p id="reset-error-text">We couldn't reset your password. Please check the details and try again.</p>
