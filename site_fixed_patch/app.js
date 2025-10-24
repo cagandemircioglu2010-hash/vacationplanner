@@ -868,7 +868,12 @@ async function readPackingFromSupabase(email, tripId) {
       console.error('Error reading packing items from Supabase:', error);
       return null;
     }
-    return data ?? [];
+    if (!Array.isArray(data)) {
+      return [];
+    }
+    return data
+      .map(normalizePackingItemFromSupabase)
+      .filter(Boolean);
   } catch (err) {
     console.error('Error reading packing items from Supabase:', err);
     return null;
@@ -984,14 +989,19 @@ function serializeReminderForSupabase(reminder, email) {
     ? reminder.date
     : formatDateInput(reminder.date || new Date());
 
-  return {
+  const payload = {
     id,
     email,
     trip_id: tripId,
     name: name || 'Reminder',
-    date: dateValue || formatDateInput(new Date()),
-    completed: Boolean(reminder.completed)
+    date: dateValue || formatDateInput(new Date())
   };
+
+  if (typeof reminder.completed !== 'undefined') {
+    payload.completed = Boolean(reminder.completed);
+  }
+
+  return payload;
 }
 
 function serializePackingItemForSupabase(item, email, tripId) {
@@ -1004,13 +1014,54 @@ function serializePackingItemForSupabase(item, email, tripId) {
     return uid('pack');
   })();
   const name = typeof item.name === 'string' ? item.name.trim() : '';
+  const allowedImportance = new Set(['essential', 'useful', 'optional']);
+  let importance = typeof item.importance === 'string' ? item.importance.toLowerCase() : '';
+  if (!allowedImportance.has(importance)) {
+    importance = 'useful';
+  }
+
   return {
     id,
     email,
     trip_id: String(tripId),
     name: name || 'Item',
-    packed: Boolean(item.packed)
+    packed: Boolean(item.packed),
+    Urgent: Boolean(item.urgent),
+    Urgency: importance
   };
+}
+
+function normalizePackingItemFromSupabase(item) {
+  if (!item || typeof item !== 'object') return null;
+
+  const normalised = { ...item };
+
+  if (normalised.trip_id && !normalised.tripId) {
+    normalised.tripId = String(normalised.trip_id);
+  }
+
+  if (typeof normalised.Urgent !== 'undefined' && typeof normalised.urgent === 'undefined') {
+    normalised.urgent = Boolean(normalised.Urgent);
+  }
+
+  if (typeof normalised.Urgency !== 'undefined' && typeof normalised.importance === 'undefined') {
+    const urgencyValue = normalised.Urgency;
+    if (typeof urgencyValue === 'string') {
+      normalised.importance = urgencyValue.toLowerCase();
+    } else if (typeof urgencyValue === 'boolean') {
+      normalised.importance = urgencyValue ? 'essential' : 'useful';
+    }
+  }
+
+  if (typeof normalised.importance === 'string') {
+    normalised.importance = normalised.importance.toLowerCase();
+  }
+
+  delete normalised.trip_id;
+  delete normalised.Urgent;
+  delete normalised.Urgency;
+
+  return normalised;
 }
 
 function mergeTripCollections(localTrips = [], remoteTrips = []) {
@@ -1102,7 +1153,8 @@ async function syncFromSupabase(me) {
     if (!t?.id) return;
     const packs = await readPackingFromSupabase(me.email, t.id);
     if (packs !== null) {
-      store.set(packingKey(t.id), Array.isArray(packs) ? packs : []);
+      const { items } = normalisePackingItems(Array.isArray(packs) ? packs : []);
+      store.set(packingKey(t.id), items);
     }
   }));
 }
@@ -1255,7 +1307,30 @@ async function writePackingToSupabase(email, tripId, items) {
   try {
     const { error } = await supabase.from('packing').upsert(payload);
     if (error) {
-      console.error('Error writing packing item to Supabase:', error);
+      const message = String(error?.message || '');
+      if (/column\s+"?(Urgent|Urgency)"?/i.test(message)) {
+        const fallbackPayload = payload.map((record) => {
+          const { Urgent, Urgency, ...rest } = record;
+          const importance = typeof Urgency === 'string'
+            ? Urgency
+            : Urgency === true
+              ? 'essential'
+              : 'useful';
+          return {
+            ...rest,
+            urgent: Boolean(Urgent),
+            importance
+          };
+        });
+        const { error: fallbackError } = await supabase.from('packing').upsert(fallbackPayload);
+        if (fallbackError) {
+          console.error('Error writing packing item to Supabase:', fallbackError);
+        } else {
+          console.warn('Packing items upserted without Urgent/Urgency columns due to schema mismatch.');
+        }
+      } else {
+        console.error('Error writing packing item to Supabase:', error);
+      }
     }
   } catch (err) {
     console.error('Error writing packing item to Supabase:', err);
@@ -1309,7 +1384,18 @@ async function writeRemindersToSupabase(email, reminders) {
   try {
     const { error } = await supabase.from('reminders').upsert(payload);
     if (error) {
-      console.error('Error writing reminders to Supabase:', error);
+      const message = String(error?.message || '');
+      if (/column\s+"?completed"?/i.test(message)) {
+        const fallbackPayload = payload.map(({ completed, ...rest }) => rest);
+        const { error: fallbackError } = await supabase.from('reminders').upsert(fallbackPayload);
+        if (fallbackError) {
+          console.error('Error writing reminders to Supabase:', fallbackError);
+        } else {
+          console.warn('Reminder completion status not stored in Supabase due to missing column.');
+        }
+      } else {
+        console.error('Error writing reminders to Supabase:', error);
+      }
     }
   } catch (err) {
     console.error('Error writing reminders to Supabase:', err);
@@ -2421,6 +2507,31 @@ function normalisePackingItems(items) {
   const list = Array.isArray(items) ? items : [];
   const normalised = list.map((item) => {
     const data = item && typeof item === 'object' ? { ...item } : {};
+    if (data.trip_id && !data.tripId) {
+      data.tripId = String(data.trip_id);
+      mutated = true;
+    }
+    if (typeof data.urgent === 'undefined' && typeof data.Urgent !== 'undefined') {
+      data.urgent = Boolean(data.Urgent);
+      mutated = true;
+    }
+    if (typeof data.importance === 'undefined' && typeof data.Urgency !== 'undefined') {
+      const urgencyValue = data.Urgency;
+      if (typeof urgencyValue === 'string') {
+        data.importance = urgencyValue.toLowerCase();
+      } else if (typeof urgencyValue === 'boolean') {
+        data.importance = urgencyValue ? 'essential' : 'useful';
+      }
+      mutated = true;
+    }
+    if (typeof data.Urgent !== 'undefined') {
+      delete data.Urgent;
+      mutated = true;
+    }
+    if (typeof data.Urgency !== 'undefined') {
+      delete data.Urgency;
+      mutated = true;
+    }
     if (!data.id) {
       data.id = uid('pack');
       mutated = true;
