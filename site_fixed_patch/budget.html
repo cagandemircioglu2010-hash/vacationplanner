@@ -211,6 +211,24 @@
             </div>
         </div>
 
+        <div id="budget-insights" class="grid grid-cols-1 md:grid-cols-3 gap-4 mt-6">
+            <div data-insight-card="allowance" class="rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 p-4">
+                <p class="text-sm font-medium text-gray-600 dark:text-gray-400">Daily Allowance</p>
+                <p data-insight="allowance" class="mt-1 text-2xl font-bold text-gray-900 dark:text-white">—</p>
+                <p data-insight-detail="allowance" class="mt-2 text-xs text-gray-500 dark:text-gray-400">Select a trip to see your recommended pace.</p>
+            </div>
+            <div data-insight-card="daily" class="rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 p-4">
+                <p class="text-sm font-medium text-gray-600 dark:text-gray-400">Actual Daily Spend</p>
+                <p data-insight="daily" class="mt-1 text-2xl font-bold text-gray-900 dark:text-white">—</p>
+                <p data-insight-detail="daily" class="mt-2 text-xs text-gray-500 dark:text-gray-400">We’ll calculate this once your trip begins.</p>
+            </div>
+            <div data-insight-card="pace" class="rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 p-4">
+                <p class="text-sm font-medium text-gray-600 dark:text-gray-400">Budget Pace</p>
+                <p data-insight="pace" class="mt-1 text-2xl font-bold text-gray-900 dark:text-white">—</p>
+                <p data-insight-detail="pace" class="mt-2 text-xs text-gray-500 dark:text-gray-400">Stay within your allowance to end the trip on budget.</p>
+            </div>
+        </div>
+
         <!-- Visualisation of expenses by category using Chart.js.  The canvas below will be
              initialised by app.js when the budget page is loaded.  A chart offers a more
              sophisticated way to interpret spending patterns and satisfies the IA
