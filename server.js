@@ -3,10 +3,7 @@ const path = require('path');
 const http = require('http');
 const url = require('url');
 
-const {
-  ERROR_FORBIDDEN,
-  resolveStaticAssetPath,
-} = require('./lib/static-serving');
+const { ERROR_FORBIDDEN, resolveFileSystemAsset } = require('./lib/static-serving');
 
 function loadEnvFromFile() {
   const envPath = path.join(__dirname, '.env');
@@ -51,27 +48,27 @@ const MIME_TYPES = {
 
 const port = Number(process.env.PORT) || 3000;
 const staticDir = path.join(__dirname, 'site_fixed_patch');
-const fallbackIndexPath = path.join(staticDir, 'index.html');
 
-function serveStaticFile(res, filePath, method) {
-  fs.stat(filePath, (err, stats) => {
-    if (err || !stats.isFile()) {
-      res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
-      res.end('Not found');
-      return;
+function streamFile(res, filePath, method, stats) {
+  const ext = path.extname(filePath).toLowerCase();
+  const mime = MIME_TYPES[ext] || 'application/octet-stream';
+  const headers = { 'Content-Type': mime };
+  if (stats && typeof stats.size === 'number') {
+    headers['Content-Length'] = stats.size;
+  }
+  res.writeHead(200, headers);
+  if (method === 'HEAD') {
+    res.end();
+    return;
+  }
+  const stream = fs.createReadStream(filePath);
+  stream.pipe(res);
+  stream.on('error', (err) => {
+    console.error('Stream error:', err);
+    if (!res.headersSent) {
+      res.writeHead(500, { 'Content-Type': 'text/plain; charset=utf-8' });
     }
-    const ext = path.extname(filePath).toLowerCase();
-    const mime = MIME_TYPES[ext] || 'application/octet-stream';
-    res.writeHead(200, { 'Content-Type': mime, 'Content-Length': stats.size });
-    if (method === 'HEAD') {
-      res.end();
-      return;
-    }
-    const stream = fs.createReadStream(filePath);
-    stream.pipe(res);
-    stream.on('error', () => {
-      res.end();
-    });
+    res.end('Internal server error');
   });
 }
 
@@ -80,20 +77,35 @@ const server = http.createServer((req, res) => {
     const parsedUrl = new url.URL(req.url, `http://${req.headers.host || 'localhost'}`);
 
     if (req.method === 'GET' || req.method === 'HEAD') {
-      const { path: safePath, error } = resolveStaticAssetPath(staticDir, parsedUrl.pathname);
-      if (!safePath) {
-        const status = error === ERROR_FORBIDDEN ? 403 : 400;
-        res.writeHead(status, { 'Content-Type': 'text/plain; charset=utf-8' });
-        res.end(status === 403 ? 'Forbidden' : 'Bad request');
-        return;
-      }
+      (async () => {
+        const asset = await resolveFileSystemAsset(staticDir, parsedUrl.pathname);
 
-      fs.access(safePath, fs.constants.F_OK, (err) => {
-        if (err) {
-          serveStaticFile(res, fallbackIndexPath, req.method);
-        } else {
-          serveStaticFile(res, safePath, req.method);
+        if (!asset.path) {
+          if (asset.error) {
+            const status = asset.error === ERROR_FORBIDDEN ? 403 : 400;
+            res.writeHead(status, { 'Content-Type': 'text/plain; charset=utf-8' });
+            res.end(status === 403 ? 'Forbidden' : 'Bad request');
+            return;
+          }
+
+          const fallback = await resolveFileSystemAsset(staticDir, '/');
+          if (!fallback.path) {
+            res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
+            res.end('Not found');
+            return;
+          }
+
+          streamFile(res, fallback.path, req.method, fallback.stats);
+          return;
         }
+
+        streamFile(res, asset.path, req.method, asset.stats);
+      })().catch((err) => {
+        console.error('Server error:', err);
+        if (!res.headersSent) {
+          res.writeHead(500, { 'Content-Type': 'text/plain; charset=utf-8' });
+        }
+        res.end('Internal server error');
       });
       return;
     }
