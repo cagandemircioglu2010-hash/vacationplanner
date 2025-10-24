@@ -7,6 +7,11 @@ const net = require('net');
 const tls = require('tls');
 const { once } = require('events');
 
+const {
+  ERROR_FORBIDDEN,
+  resolveStaticAssetPath,
+} = require('./lib/static-serving');
+
 const fetchFn = typeof globalThis.fetch === 'function' ? globalThis.fetch.bind(globalThis) : null;
 
 function loadEnvFromFile() {
@@ -52,6 +57,7 @@ const MIME_TYPES = {
 
 const port = Number(process.env.PORT) || 3000;
 const staticDir = path.join(__dirname, 'site_fixed_patch');
+const fallbackIndexPath = path.join(staticDir, 'index.html');
 const FALLBACK_TOKEN_TTL_MS = 30 * 60 * 1000;
 
 function sanitizeHeader(value) {
@@ -640,23 +646,17 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (req.method === 'GET' || req.method === 'HEAD') {
-      let pathname = decodeURIComponent(parsedUrl.pathname);
-      if (pathname.endsWith('/')) {
-        pathname += 'index.html';
-      }
-      if (pathname === '/index') {
-        pathname = '/index.html';
-      }
-      const safePath = path.normalize(path.join(staticDir, pathname));
-      if (!safePath.startsWith(staticDir)) {
-        res.writeHead(403, { 'Content-Type': 'text/plain; charset=utf-8' });
-        res.end('Forbidden');
+      const { path: safePath, error } = resolveStaticAssetPath(staticDir, parsedUrl.pathname);
+      if (!safePath) {
+        const status = error === ERROR_FORBIDDEN ? 403 : 400;
+        res.writeHead(status, { 'Content-Type': 'text/plain; charset=utf-8' });
+        res.end(status === 403 ? 'Forbidden' : 'Bad request');
         return;
       }
+
       fs.access(safePath, fs.constants.F_OK, (err) => {
         if (err) {
-          const fallback = path.join(staticDir, 'index.html');
-          serveStaticFile(res, fallback, req.method);
+          serveStaticFile(res, fallbackIndexPath, req.method);
         } else {
           serveStaticFile(res, safePath, req.method);
         }

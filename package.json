@@ -4,7 +4,8 @@
   "description": "Vacation Planner demo with password reset email support",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "test": "node --test"
   },
   "dependencies": {}
 }
