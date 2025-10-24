@@ -989,7 +989,8 @@ function serializeReminderForSupabase(reminder, email) {
     email,
     trip_id: tripId,
     name: name || 'Reminder',
-    date: dateValue || formatDateInput(new Date())
+    date: dateValue || formatDateInput(new Date()),
+    completed: Boolean(reminder.completed)
   };
 }
 
