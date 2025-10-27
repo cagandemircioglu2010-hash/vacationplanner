@@ -158,6 +158,35 @@ function formatDateInput(date) {
   return `${year}-${month}-${day}`;
 }
 
+function coerceReminderCompleted(value) {
+  if (typeof value === 'boolean') {
+    return value;
+  }
+  if (typeof value === 'string') {
+    const normalised = value.trim().toLowerCase();
+    if (!normalised) return false;
+    if (['true', '1', 'yes', 'y', 'on'].includes(normalised)) return true;
+    if (['false', '0', 'no', 'n', 'off'].includes(normalised)) return false;
+  }
+  if (typeof value === 'number') {
+    return Number.isFinite(value) ? value !== 0 : Boolean(value);
+  }
+  if (value == null) {
+    return false;
+  }
+  if (typeof value === 'object') {
+    try {
+      const primitive = value.valueOf !== Object.prototype.valueOf ? value.valueOf() : value;
+      if (primitive !== value) {
+        return coerceReminderCompleted(primitive);
+      }
+    } catch {
+      // Fall through to Boolean coercion below.
+    }
+  }
+  return Boolean(value);
+}
+
 const KEY_USERS = "wl_users";                  // [{email, name, passHash}]
 const KEY_SESSION = "wl_session";              // {email}
 const tripsKey = (email) => `wl_trips_${email}`;        // [{...trip}]
@@ -951,7 +980,7 @@ function normalizeReminderFromSupabase(reminder) {
   if (normalized.trip_id && !normalized.tripId) normalized.tripId = normalized.trip_id;
   if (normalized.created_at && !normalized.createdAt) normalized.createdAt = normalized.created_at;
   if (normalized.updated_at && !normalized.updatedAt) normalized.updatedAt = normalized.updated_at;
-  const completed = Boolean(normalized.completed);
+  const completed = coerceReminderCompleted(normalized.completed);
   if (normalized.completed !== completed) normalized.completed = completed;
   delete normalized.trip_id;
   delete normalized.created_at;
@@ -994,12 +1023,9 @@ function serializeReminderForSupabase(reminder, email) {
     email,
     trip_id: tripId,
     name: name || 'Reminder',
-    date: dateValue || formatDateInput(new Date())
+    date: dateValue || formatDateInput(new Date()),
+    completed: coerceReminderCompleted(reminder.completed)
   };
-
-  if (typeof reminder.completed !== 'undefined') {
-    payload.completed = Boolean(reminder.completed);
-  }
 
   return payload;
 }
@@ -1385,11 +1411,10 @@ async function writeRemindersToSupabase(email, reminders) {
     const { error } = await supabase.from('reminders').upsert(payload);
     if (error) {
       const message = String(error?.message || '');
-      const lowerMsg = message.toLowerCase();
+      const code = String(error?.code || '').toUpperCase();
       const missingCompletedColumn =
-        /column\s+["']?completed["']?/i.test(message) ||
-        /['"]completed['"]\s+column/i.test(message) ||
-        (lowerMsg.includes('completed') && lowerMsg.includes('column') && String(error?.code || '').toUpperCase() === 'PGRST204');
+        code === '42703' ||
+        /column\s+["']?completed["']?(?:\s+of\s+relation\s+["']?reminders["']?)?\s+does\s+not\s+exist/i.test(message);
       if (missingCompletedColumn) {
         const fallbackPayload = payload.map(({ completed, ...rest }) => rest);
         const { error: fallbackError } = await supabase.from('reminders').upsert(fallbackPayload);
@@ -2632,7 +2657,7 @@ function normaliseReminders(reminders) {
       data.date = fallback || formatDateInput(new Date());
       mutated = true;
     }
-    const completed = Boolean(data.completed);
+    const completed = coerceReminderCompleted(data.completed);
     if (data.completed !== completed) {
       data.completed = completed;
       mutated = true;
