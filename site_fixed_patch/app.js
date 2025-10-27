@@ -1385,7 +1385,12 @@ async function writeRemindersToSupabase(email, reminders) {
     const { error } = await supabase.from('reminders').upsert(payload);
     if (error) {
       const message = String(error?.message || '');
-      if (/column\s+"?completed"?/i.test(message)) {
+      const lowerMsg = message.toLowerCase();
+      const missingCompletedColumn =
+        /column\s+["']?completed["']?/i.test(message) ||
+        /['"]completed['"]\s+column/i.test(message) ||
+        (lowerMsg.includes('completed') && lowerMsg.includes('column') && String(error?.code || '').toUpperCase() === 'PGRST204');
+      if (missingCompletedColumn) {
         const fallbackPayload = payload.map(({ completed, ...rest }) => rest);
         const { error: fallbackError } = await supabase.from('reminders').upsert(fallbackPayload);
         if (fallbackError) {
