@@ -1609,6 +1609,22 @@ async function hash(text) {
   return `plain:${text}`;
 }
 
+function validatePasswordStrength(password) {
+  const rules = [
+    { test: (p) => p.length >= 8, message: "Password must be at least 8 characters long." },
+    { test: (p) => /[A-Z]/.test(p), message: "Include at least one uppercase letter." },
+    { test: (p) => /[a-z]/.test(p), message: "Include at least one lowercase letter." },
+    { test: (p) => /\d/.test(p), message: "Include at least one number." },
+    { test: (p) => /[^A-Za-z0-9]/.test(p), message: "Include at least one special character." }
+  ];
+
+  const failedRule = rules.find(rule => !rule.test(password));
+  if (failedRule) {
+    return { ok: false, message: failedRule.message };
+  }
+  return { ok: true, message: "" };
+}
+
 function getSession() {
   return store.get(KEY_SESSION, null);
 }
@@ -1645,6 +1661,9 @@ async function handleRegisterPage() {
   };
 
   const clearPasswordMismatch = () => {
+    if (passEl) {
+      passEl.setCustomValidity("");
+    }
     if (confirmEl) {
       confirmEl.setCustomValidity("");
     }
@@ -1654,7 +1673,7 @@ async function handleRegisterPage() {
   on(passEl, "input", clearPasswordMismatch);
   on(confirmEl, "input", clearPasswordMismatch);
 
-    on(loginLink, "click", (e) => {
+  on(loginLink, "click", (e) => {
     e.preventDefault();
     // Navigate to the lowercase login page file.  Filenames on Netlify are case‑sensitive.
     window.location.href = "logpage.html";
@@ -1672,6 +1691,15 @@ async function handleRegisterPage() {
     // Basic validation: if required fields are empty simply abort submission.  We avoid using
     // disruptive alert popups; the browser's built‑in required attribute handles user feedback.
     if (!name || !email || !pass) {
+      return;
+    }
+    const strength = validatePasswordStrength(pass);
+    if (!strength.ok) {
+      if (passEl) {
+        passEl.setCustomValidity(strength.message);
+        passEl.reportValidity();
+      }
+      setRegisterError(strength.message);
       return;
     }
     if (pass !== confirm) {
