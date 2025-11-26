@@ -1818,6 +1818,17 @@ async function handleLoginPage() {
       return;
     }
 
+    // Cache the user locally so downstream session checks that fall back to
+    // localStorage (e.g. when offline) can still resolve the account.
+    const cachedUsers = store.get(KEY_USERS, []);
+    const existingIndex = cachedUsers.findIndex(u => u.email === email);
+    if (existingIndex >= 0) {
+      cachedUsers[existingIndex] = user;
+    } else {
+      cachedUsers.push(user);
+    }
+    store.set(KEY_USERS, cachedUsers);
+
     store.set(KEY_SESSION, { email });
     if (rememberEl?.checked) {
       // Optionally set a flag for a "remembered" longer session. For demo, no-op.
