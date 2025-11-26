@@ -788,6 +788,36 @@ async function writeUserToSupabase(user) {
   }
 }
 
+/**
+ * Retrieve a single user record from Supabase by email.
+ *
+ * @param {string} email The user's email address
+ * @returns {Promise<Object|null>} The user row when found; otherwise null
+ */
+async function readUserFromSupabase(email) {
+  const supabase = window.supabaseClient;
+  if (!supabase || !email) return null;
+  try {
+    const { data, error } = await supabase
+      .from('users')
+      .select()
+      .eq('email', email)
+      .single();
+
+    if (error) {
+      if (error.code !== 'PGRST116') {
+        console.error('Error reading user from Supabase:', error);
+      }
+      return null;
+    }
+
+    return data ?? null;
+  } catch (err) {
+    console.error('Error reading user from Supabase:', err);
+    return null;
+  }
+}
+
 async function readTripsFromSupabase(email) {
   /**
    * Retrieve all trips for a given user from Supabase.
@@ -1763,10 +1793,9 @@ async function handleLoginPage() {
     const pass = passEl?.value || "";
     const passHash = await hash(pass);
 
-    const users = store.get(KEY_USERS, []);
-    const user = users.find(u => u.email === email && u.passHash === passHash);
+    const user = await readUserFromSupabase(email);
 
-    if (!user) {
+    if (!user || user.passHash !== passHash) {
       errorBox && errorBox.classList.remove("hidden");
       return;
     }
