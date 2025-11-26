@@ -788,6 +788,36 @@ async function writeUserToSupabase(user) {
   }
 }
 
+/**
+ * Retrieve a single user record from Supabase by email.
+ *
+ * @param {string} email The user's email address
+ * @returns {Promise<Object|null>} The user row when found; otherwise null
+ */
+async function readUserFromSupabase(email) {
+  const supabase = window.supabaseClient;
+  if (!supabase || !email) return null;
+  try {
+    const { data, error } = await supabase
+      .from('users')
+      .select()
+      .eq('email', email)
+      .single();
+
+    if (error) {
+      if (error.code !== 'PGRST116') {
+        console.error('Error reading user from Supabase:', error);
+      }
+      return null;
+    }
+
+    return data ?? null;
+  } catch (err) {
+    console.error('Error reading user from Supabase:', err);
+    return null;
+  }
+}
+
 async function readTripsFromSupabase(email) {
   /**
    * Retrieve all trips for a given user from Supabase.
@@ -1628,12 +1658,30 @@ function validatePasswordStrength(password) {
 function getSession() {
   return store.get(KEY_SESSION, null);
 }
-function requireSession() {
+async function requireSession() {
   const s = getSession();
   if (!s || !s.email) return null;
-  const users = store.get(KEY_USERS, []);
-  const me = users.find(u => u.email === s.email);
-  return me || null;
+
+  // Prefer loading the user from Supabase so credentials and profile data stay
+  // in sync across devices.  If Supabase is unavailable, fall back to the
+  // locally cached user to preserve offline behaviour.
+  const supabaseUser = await readUserFromSupabase(s.email);
+  if (supabaseUser) {
+    // Cache the user locally so subsequent calls can avoid another network
+    // roundtrip when offline.
+    const users = store.get(KEY_USERS, []);
+    const existingIndex = users.findIndex(u => u.email === s.email);
+    if (existingIndex >= 0) {
+      users[existingIndex] = supabaseUser;
+    } else {
+      users.push(supabaseUser);
+    }
+    store.set(KEY_USERS, users);
+    return supabaseUser;
+  }
+
+  const cachedUsers = store.get(KEY_USERS, []);
+  return cachedUsers.find(u => u.email === s.email) || null;
 }
 
 // ---------- Auth: Register / Login / Logout ----------
@@ -1763,10 +1811,9 @@ async function handleLoginPage() {
     const pass = passEl?.value || "";
     const passHash = await hash(pass);
 
-    const users = store.get(KEY_USERS, []);
-    const user = users.find(u => u.email === email && u.passHash === passHash);
+    const user = await readUserFromSupabase(email);
 
-    if (!user) {
+    if (!user || user.passHash !== passHash) {
       errorBox && errorBox.classList.remove("hidden");
       return;
     }
@@ -3830,7 +3877,7 @@ function wireBudgetPage(me) {
   // ("Cannot access 'expensesChart' before initialization") because
   // updateExpensesChart() was called prior to this declaration.
   var expensesChart = null;
-  function updateExpensesChart() {
+  async function updateExpensesChart() {
     const canvas = qs('#expenses-chart');
     if (!canvas) return;
 
@@ -3892,9 +3939,9 @@ function wireBudgetPage(me) {
     if (window.currentActiveTrip) {
       at = window.currentActiveTrip;
     } else {
-      const currentUser = (typeof requireSession === 'function') ? requireSession() : null;
+      const currentUser = (typeof requireSession === 'function') ? await requireSession() : null;
       at = currentUser ? getActiveTripForBudget(currentUser) : null;
-    }
+  }
 
     // If there is no active trip or the trip id is undefined, reset the chart
     // and update the top categories to show no data.  This avoids errors when
@@ -5310,9 +5357,10 @@ function wireTestHtml() {
     const email = (userEl?.value || "").toLowerCase().trim();
     const pass = passEl?.value || "";
     const passHash = await hash(pass);
-    const users = store.get(KEY_USERS, []);
-    const user = users.find(u => u.email === email && u.passHash === passHash);
-    msg.textContent = user ? "Login successful!" : "Invalid credentials.";
+    const user = await readUserFromSupabase(email);
+    msg.textContent = user && user.passHash === passHash
+      ? "Login successful!"
+      : "Invalid credentials.";
   });
 }
 
@@ -5326,7 +5374,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   // Route auth
   let me = null;
   if (isProtected) {
-    me = requireSession();
+    me = await requireSession();
     if (!me) {
       // When a protected page is visited without a valid session, redirect to the
       // login page.  The login file is "logpage.html" (lowercase).  Using an
@@ -5336,7 +5384,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     }
   } else {
     // Even on public pages, load me if logged in (for smoother UX)
-    me = requireSession();
+    me = await requireSession();
   }
 
     // Global header nav if present
@@ -5428,8 +5476,8 @@ document.addEventListener("DOMContentLoaded", async () => {
   // browsers may restore pages from cache without firing DOMContentLoaded.
   // Reinvoke key page wiring on the pageshow event to ensure the
   // calendar, homepage and budget features are properly initialised.
-  window.addEventListener('pageshow', () => {
-    const sess = requireSession();
+  window.addEventListener('pageshow', async () => {
+    const sess = await requireSession();
     // Rebuild the dynamic calendar if present
     if (qs('#calendar-grid')) {
       maybeWireCalendar(sess);
