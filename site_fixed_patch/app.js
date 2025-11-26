@@ -1818,6 +1818,17 @@ async function handleLoginPage() {
       return;
     }
 
+    // Cache the authenticated user locally so downstream session checks and
+    // offline flows can find the profile without another Supabase request.
+    const cachedUsers = store.get(KEY_USERS, []);
+    const existingIdx = cachedUsers.findIndex(u => u.email === email);
+    if (existingIdx >= 0) {
+      cachedUsers[existingIdx] = user;
+    } else {
+      cachedUsers.push(user);
+    }
+    store.set(KEY_USERS, cachedUsers);
+
     store.set(KEY_SESSION, { email });
     if (rememberEl?.checked) {
       // Optionally set a flag for a "remembered" longer session. For demo, no-op.
