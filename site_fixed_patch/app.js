@@ -4334,15 +4334,13 @@ function maybeWireCalendar(me) {
   const tripBox = qs('#trip-details');
   const tripDetailRedirect = calendarRedirect;
   const selectTripForDate = (iso) => {
-    if (!tripBox) return;
     const list = Array.isArray(trips) ? trips : [];
     const matches = list.filter(t => iso >= t.startDate && iso <= t.endDate);
     if (matches.length === 0) return;
     const ordered = mergeSort(matches.slice(), (a, b) => new Date(a.startDate) - new Date(b.startDate));
-    renderTripDetail(tripBox, ordered[0]);
-    if (typeof tripBox.scrollIntoView === 'function') {
-      tripBox.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    }
+    const selectedTrip = ordered[0];
+    if (!selectedTrip?.id) return;
+    window.location.href = `addvac.html?edit=${encodeURIComponent(selectedTrip.id)}&redirect=${encodeURIComponent(tripDetailRedirect)}`;
   };
   const wireTripDetailActions = () => {
     if (!tripBox || !me?.email) return;
@@ -4418,7 +4416,7 @@ function maybeWireCalendar(me) {
             cell.setAttribute('tabindex', '0');
             const tripCount = list.filter(t => iso >= t.startDate && iso <= t.endDate).length;
             const labelSuffix = tripCount > 1 ? `${tripCount} trips` : '1 trip';
-            cell.setAttribute('aria-label', `Open trip details for ${iso} (${labelSuffix})`);
+            cell.setAttribute('aria-label', `Edit trip for ${iso} (${labelSuffix})`);
             cell.addEventListener('click', () => selectTripForDate(iso));
             cell.addEventListener('keydown', (event) => {
               if (event.key === 'Enter' || event.key === ' ') {
