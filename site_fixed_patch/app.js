@@ -4331,6 +4331,48 @@ function maybeWireCalendar(me) {
   const labelEl = qs('#calendar-month-label');
   const prevBtn = qs('#prev-month-btn');
   const nextBtn = qs('#next-month-btn');
+  const tripBox = qs('#trip-details');
+  const tripDetailRedirect = calendarRedirect;
+  const selectTripForDate = (iso) => {
+    if (!tripBox) return;
+    const list = Array.isArray(trips) ? trips : [];
+    const matches = list.filter(t => iso >= t.startDate && iso <= t.endDate);
+    if (matches.length === 0) return;
+    const ordered = mergeSort(matches.slice(), (a, b) => new Date(a.startDate) - new Date(b.startDate));
+    renderTripDetail(tripBox, ordered[0]);
+    if (typeof tripBox.scrollIntoView === 'function') {
+      tripBox.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+  };
+  const wireTripDetailActions = () => {
+    if (!tripBox || !me?.email) return;
+    setSingletonListener(tripBox, 'click', async (e) => {
+      const target = e.target.closest('button');
+      if (!target) return;
+      const currentId = tripBox?.dataset?.currentTripId;
+      if (!currentId) return;
+
+      if (target.id === 'edit-trip-button') {
+        e.preventDefault();
+        window.location.href = `addvac.html?edit=${encodeURIComponent(currentId)}&redirect=${encodeURIComponent(tripDetailRedirect)}`;
+        return;
+      }
+
+      if (target.id === 'delete-trip-button') {
+        e.preventDefault();
+        try {
+          await deleteTripCascade(me.email, currentId);
+        } catch (err) {
+          console.error('Failed to delete trip:', err);
+          tripBox.innerHTML = "<p class='text-red-500'>Unable to delete trip. Please try again.</p>";
+          return;
+        }
+        maybeWireCalendar(me);
+      }
+    }, '_wlTripActionHandler');
+  };
+  wireTripDetailActions();
+
   if (gridEl && labelEl) {
     if (!gridEl.dataset.wlLayoutApplied) {
       gridEl.style.display = 'grid';
@@ -4371,6 +4413,19 @@ function maybeWireCalendar(me) {
           const isStart = list.some(t => t.startDate === iso);
           if (inRange) {
             cell.classList.add('bg-primary/10', 'dark:bg-primary/20', 'text-primary');
+            cell.classList.add('cursor-pointer', 'hover:bg-primary/20', 'dark:hover:bg-primary/30', 'transition-colors');
+            cell.setAttribute('role', 'button');
+            cell.setAttribute('tabindex', '0');
+            const tripCount = list.filter(t => iso >= t.startDate && iso <= t.endDate).length;
+            const labelSuffix = tripCount > 1 ? `${tripCount} trips` : '1 trip';
+            cell.setAttribute('aria-label', `Open trip details for ${iso} (${labelSuffix})`);
+            cell.addEventListener('click', () => selectTripForDate(iso));
+            cell.addEventListener('keydown', (event) => {
+              if (event.key === 'Enter' || event.key === ' ') {
+                event.preventDefault();
+                selectTripForDate(iso);
+              }
+            });
           }
           if (isStart) {
             cell.classList.remove('bg-primary/10', 'dark:bg-primary/20', 'text-primary');
