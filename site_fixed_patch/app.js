@@ -717,30 +717,44 @@ function getExpenses(tripId) {
 }
 
 /*
- * ReminderTree implements a simple binary search tree keyed by the
- * reminder date.  Each node stores a reminder object (containing
- * id, tripId, name, date) and left/right children.  The tree is
- * ordered by the ISO date string of the reminder.  Using a binary
- * tree allows efficient insertion and retrieval of reminders in
- * chronological order via an in‑order traversal.  Although JavaScript
- * arrays could be used directly, this demonstrates a dynamic data
- * structure as requested.
+ * ReminderTree implements a binary search tree keyed by reminder date.
+ *
+ * To explicitly demonstrate inheritance, we model a parent node class
+ * (TreeNode) and a child node class (ReminderNode) that extends it.
+ * ReminderNode inherits `left`, `right` and `parent` references from
+ * TreeNode while adding the reminder payload specific to this feature.
  */
+class TreeNode {
+  constructor(parent = null) {
+    this.left = null;
+    this.right = null;
+    this.parent = parent;
+  }
+}
+
+class ReminderNode extends TreeNode {
+  constructor(value, parent = null) {
+    super(parent);
+    this.value = value;
+  }
+}
+
 class ReminderTree {
   constructor() {
     this.root = null;
   }
+
   insert(rem) {
-    const iso = rem?.date || '';
-    function _insert(node, value) {
-      if (!node) return { value, left: null, right: null };
+    function _insert(node, value, parent = null) {
+      if (!node) return new ReminderNode(value, parent);
       if (value.date < node.value.date) {
-        node.left = _insert(node.left, value);
+        node.left = _insert(node.left, value, node);
       } else {
-        node.right = _insert(node.right, value);
+        node.right = _insert(node.right, value, node);
       }
       return node;
     }
+
     this.root = _insert(this.root, rem);
   }
   // Perform an in‑order traversal and invoke the callback on each reminder
