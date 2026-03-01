@@ -1,25 +1,10 @@
 /*
- * Wrapper file for Wanderlust Demo App
- *
- * This project originally shipped with a JavaScript file whose filename
- * included a timestamp (e.g. ``app 10.20.58.js``). All of the HTML
- * templates expect to load a script named ``app.js``, so without this
- * wrapper the business logic never runs and the interface feels broken.
- *
- * To fix this without editing every HTML file by hand, we provide
- * ``app.js`` as an entry point that simply includes the contents of
- * the original file. If the original file is moved or renamed in
- * future builds, you only need to update the import here.
+ * Main application bundle.
  */
 
-// Import the full application logic. Note: in a static browser
-// environment there is no module system, so we embed the contents of
-// the original file directly instead of using import/export. The
-// following immediately‑invoked function expression (IIFE) wraps the
-// original code in its own scope to avoid leaking variables.
+// The application logic is wrapped in an IIFE so variables do not leak into
+// the global scope when loaded in a static browser environment.
 (function(){
-
-/* START OF ORIGINAL APP CODE */
 
 // ---------- Utilities ----------
 const qs  = (sel, root = document) => root.querySelector(sel);
@@ -189,9 +174,11 @@ function coerceReminderCompleted(value) {
 
 const KEY_USERS = "wl_users";                  // [{email, name, passHash}]
 const KEY_SESSION = "wl_session";              // {email}
+const KEY_SESSION_REMEMBERED = "wl_session_remembered";
 const tripsKey = (email) => `wl_trips_${email}`;        // [{...trip}]
 const expensesKey = (tripId) => `wl_exp_${tripId}`;     // [{...expense}]
 const expensesDirtyKey = (tripId) => `wl_exp_dirty_${tripId}`; // boolean dirty flag
+const deletedExpensesStateKey = (tripId) => `wl_deleted_exp_state_${tripId}`; // {stack:[expense], queue:[expense]}
 const remindersKey = (email) => `wl_rem_${email}`;      // [{...reminder}]
 const selectedTripKey = (email) => `wl_selected_trip_${email}`; // last chosen trip id
 const packingKey = (tripId) => `wl_pack_${tripId}`;     // [{...packing item}]
@@ -1641,7 +1628,7 @@ function uid(prefix = "id") {
   return `${prefix}_${Math.random().toString(36).slice(2)}_${Date.now()}`;
 }
 
-// WebCrypto SHA-256 (best-effort); fallback to plain string if not available
+// WebCrypto SHA-256 (best-effort); fallback keeps login functional in older browsers.
 async function hash(text) {
   if (window.crypto?.subtle) {
     const enc = new TextEncoder().encode(text);
@@ -1649,8 +1636,54 @@ async function hash(text) {
     const arr = Array.from(new Uint8Array(buf));
     return arr.map(b => b.toString(16).padStart(2, "0")).join("");
   }
-  // fallback (not secure, but avoids blocking the demo)
-  return `plain:${text}`;
+  let result = 2166136261;
+  const value = String(text ?? '');
+  for (let i = 0; i < value.length; i += 1) {
+    result ^= value.charCodeAt(i);
+    result = Math.imul(result, 16777619);
+  }
+  return `fnv1a:${(result >>> 0).toString(16).padStart(8, '0')}`;
+}
+
+function persistSession(session, remember = false) {
+  const payload = session && session.email
+    ? { ...session, remembered: Boolean(remember), savedAt: nowISO() }
+    : null;
+
+  if (!payload) {
+    try {
+      sessionStorage.removeItem(KEY_SESSION);
+    } catch {
+      // Ignore storage access errors.
+    }
+    store.remove(KEY_SESSION);
+    store.remove(KEY_SESSION_REMEMBERED);
+    return;
+  }
+
+  if (payload.remembered) {
+    try {
+      sessionStorage.removeItem(KEY_SESSION);
+    } catch {
+      // Ignore storage access errors.
+    }
+    store.set(KEY_SESSION, payload);
+    store.set(KEY_SESSION_REMEMBERED, true);
+    return;
+  }
+
+  store.remove(KEY_SESSION);
+  store.remove(KEY_SESSION_REMEMBERED);
+  try {
+    sessionStorage.setItem(KEY_SESSION, JSON.stringify(payload));
+  } catch {
+    // Fall back to localStorage if sessionStorage is unavailable.
+    store.set(KEY_SESSION, payload);
+  }
+}
+
+function clearSession() {
+  persistSession(null);
 }
 
 function validatePasswordStrength(password) {
@@ -1670,6 +1703,14 @@ function validatePasswordStrength(password) {
 }
 
 function getSession() {
+  try {
+    const sessionValue = sessionStorage.getItem(KEY_SESSION);
+    if (sessionValue) {
+      return JSON.parse(sessionValue);
+    }
+  } catch {
+    // Ignore sessionStorage access issues and use local fallback.
+  }
   return store.get(KEY_SESSION, null);
 }
 async function requireSession() {
@@ -1796,7 +1837,7 @@ async function handleRegisterPage() {
     }
     users.push(newUser);
     store.set(KEY_USERS, users);
-    store.set(KEY_SESSION, { email }); // auto-login
+    persistSession({ email }, true); // auto-login and remember by default
     // Directly redirect to the home page upon successful account creation.  A dedicated
     // notification area could be used to display a success message if desired.
     window.location.href = "homepage.html";
@@ -1832,10 +1873,7 @@ async function handleLoginPage() {
       return;
     }
 
-    store.set(KEY_SESSION, { email });
-    if (rememberEl?.checked) {
-      // Optionally set a flag for a "remembered" longer session. For demo, no-op.
-    }
+    persistSession({ email }, Boolean(rememberEl?.checked));
     // Synchronise trips and expenses from Supabase after login
     await syncFromSupabase({ email });
     window.location.href = "homepage.html";
@@ -1847,7 +1885,7 @@ function addLogoutShortcut() {
   // Press Ctrl/Cmd+Shift+L to logout
   on(document, "keydown", (e) => {
     if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === "l") {
-      store.remove(KEY_SESSION);
+      clearSession();
       // Redirect to login page without showing a popup
       window.location.href = "logpage.html";
     }
@@ -1884,6 +1922,7 @@ async function deleteTripCascade(email, tripId) {
   // Clear cached datasets associated with the trip
   store.remove(expensesKey(tripId));
   markExpensesDirty(tripId, false);
+  store.remove(deletedExpensesStateKey(tripId));
   store.remove(packingKey(tripId));
   removeRecentTrip(email, tripId);
 
@@ -2576,6 +2615,21 @@ function getExpenses(tripId) {
     return [];
   }
   return store.get(expensesKey(tripId), []) || [];
+}
+
+function getDeletedExpenseState(tripId) {
+  if (!tripId) return { stack: [], queue: [] };
+  const raw = store.get(deletedExpensesStateKey(tripId), null) || {};
+  const stack = Array.isArray(raw.stack) ? raw.stack : [];
+  const queue = Array.isArray(raw.queue) ? raw.queue : [];
+  return { stack, queue };
+}
+
+function saveDeletedExpenseState(tripId, state) {
+  if (!tripId) return;
+  const stack = Array.isArray(state?.stack) ? state.stack : [];
+  const queue = Array.isArray(state?.queue) ? state.queue : [];
+  store.set(deletedExpensesStateKey(tripId), { stack, queue });
 }
 
 function areExpensesDirty(tripId) {
@@ -3290,14 +3344,17 @@ function wireBudgetPage(me) {
     window.currentActiveTrip = activeTrip || null;
     updateBudgetInputState();
 
-    // Maintain a stack of deleted expenses for the current trip.  Each time the user
-    // deletes an expense row, the removed record is pushed onto this stack.  An
-    // "Undo Delete" button allows the user to restore the most recently deleted
-    // expense.  This demonstrates the use of a dynamic LIFO data structure
-    // (stack) to manage undoable actions.  The stack is cleared whenever a new
-    // trip is selected or the page reloads, as it only pertains to the current
-    // session.
-    let deletedStack = [];
+    // Track deleted expenses with both LIFO (stack) and FIFO (queue)
+    // structures. The stack powers undo for the latest deletion, while the
+    // queue keeps chronological deletion history for future workflows.
+    let deletedState = getDeletedExpenseState(activeTrip?.id);
+    let deletedStack = deletedState.stack;
+    let deletedQueue = deletedState.queue;
+
+    function persistDeletedExpenses() {
+      if (!activeTrip?.id) return;
+      saveDeletedExpenseState(activeTrip.id, { stack: deletedStack, queue: deletedQueue });
+    }
     /**
      * Update the visibility of the undo button based on whether there are
      * deleted expenses to restore.  When the stack is empty, the button is
@@ -3327,7 +3384,12 @@ function wireBudgetPage(me) {
           if (activeTrip?.id) {
             const rows = getExpenses(activeTrip.id);
             rows.push(last);
+            const queueIndex = deletedQueue.findIndex((item) => item && item.id === last.id);
+            if (queueIndex >= 0) {
+              deletedQueue.splice(queueIndex, 1);
+            }
             saveExpenses(activeTrip.id, rows);
+            persistDeletedExpenses();
             renderTable();
           }
         }
@@ -3826,9 +3888,13 @@ function wireBudgetPage(me) {
     const idx  = rows.findIndex(r => r.id === id);
     if (idx < 0) return;
     if (btn.classList.contains('del-row')) {
-      // Remove the expense and push it onto the deletedStack for undo
+      // Remove the expense and record it in both deleted structures.
       const [removed] = rows.splice(idx, 1);
-      if (removed) deletedStack.push(removed);
+      if (removed) {
+        deletedStack.push(removed);
+        deletedQueue.push(removed);
+        persistDeletedExpenses();
+      }
       saveExpenses(activeTrip.id, rows);
       renderTable();
       // Update undo button visibility
@@ -5482,7 +5548,7 @@ document.addEventListener("DOMContentLoaded", async () => {
         // Clear the session and redirect to the login page.  Ensure the href
         // matches the lowercase filename on disk (logpage.html) to avoid 404s on
         // case‑sensitive deployments.
-        store.remove(KEY_SESSION);
+        clearSession();
         window.location.href = 'logpage.html';
       });
     });
