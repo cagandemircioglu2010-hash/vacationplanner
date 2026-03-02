@@ -648,22 +648,18 @@ function setRecentTrips(email, arr) {
  */
 function addRecentTrip(email, tripId) {
   if (!email || !tripId) return;
-  let queue = getRecentTrips(email);
-  // Remove existing occurrences
-  queue = queue.filter(id => id !== tripId);
-  // Add to front
-  queue.unshift(tripId);
-  // Limit to five entries
-  if (queue.length > 5) {
-    queue = queue.slice(0, 5);
-  }
-  setRecentTrips(email, queue);
+  const queue = Queue.fromArray(getRecentTrips(email));
+  queue.remove((id) => id === tripId);
+  queue.enqueueFront(tripId);
+  queue.limit(5);
+  setRecentTrips(email, queue.toArray());
 }
 
 function removeRecentTrip(email, tripId) {
   if (!email || !tripId) return;
-  const queue = getRecentTrips(email).filter(id => id !== tripId);
-  setRecentTrips(email, queue);
+  const queue = Queue.fromArray(getRecentTrips(email));
+  queue.remove((id) => id === tripId);
+  setRecentTrips(email, queue.toArray());
 }
 
 // Retrieve an array of reminders for a user from localStorage.  Supabase
@@ -716,6 +712,92 @@ class TreeNode {
     this.left = null;
     this.right = null;
     this.parent = parent;
+  }
+}
+
+class Stack {
+  #items;
+
+  constructor(initialValues = []) {
+    this.#items = Array.isArray(initialValues) ? [...initialValues] : [];
+  }
+
+  static fromArray(values = []) {
+    return new Stack(values);
+  }
+
+  push(item) {
+    this.#items.push(item);
+    return this.size;
+  }
+
+  pop() {
+    return this.#items.pop();
+  }
+
+  peek() {
+    return this.#items[this.#items.length - 1];
+  }
+
+  isEmpty() {
+    return this.#items.length === 0;
+  }
+
+  get size() {
+    return this.#items.length;
+  }
+
+  toArray() {
+    return [...this.#items];
+  }
+}
+
+class Queue {
+  #items;
+
+  constructor(initialValues = []) {
+    this.#items = Array.isArray(initialValues) ? [...initialValues] : [];
+  }
+
+  static fromArray(values = []) {
+    return new Queue(values);
+  }
+
+  enqueue(item) {
+    this.#items.push(item);
+    return this.size;
+  }
+
+  enqueueFront(item) {
+    this.#items.unshift(item);
+    return this.size;
+  }
+
+  dequeue() {
+    return this.#items.shift();
+  }
+
+  remove(predicate) {
+    if (typeof predicate !== 'function') return null;
+    const index = this.#items.findIndex(predicate);
+    if (index < 0) return null;
+    const [removed] = this.#items.splice(index, 1);
+    return removed;
+  }
+
+  limit(maxItems) {
+    if (!Number.isInteger(maxItems) || maxItems < 0) return;
+    if (this.#items.length > maxItems) {
+      this.#items = this.#items.slice(0, maxItems);
+    }
+  }
+
+  get size() {
+    return this.#items.length;
+  }
+
+  toArray() {
+    return [...this.#items];
   }
 }
 
@@ -2618,17 +2700,21 @@ function getExpenses(tripId) {
 }
 
 function getDeletedExpenseState(tripId) {
-  if (!tripId) return { stack: [], queue: [] };
+  if (!tripId) return { stack: new Stack(), queue: new Queue() };
   const raw = store.get(deletedExpensesStateKey(tripId), null) || {};
-  const stack = Array.isArray(raw.stack) ? raw.stack : [];
-  const queue = Array.isArray(raw.queue) ? raw.queue : [];
+  const stack = Stack.fromArray(Array.isArray(raw.stack) ? raw.stack : []);
+  const queue = Queue.fromArray(Array.isArray(raw.queue) ? raw.queue : []);
   return { stack, queue };
 }
 
 function saveDeletedExpenseState(tripId, state) {
   if (!tripId) return;
-  const stack = Array.isArray(state?.stack) ? state.stack : [];
-  const queue = Array.isArray(state?.queue) ? state.queue : [];
+  const stack = state?.stack instanceof Stack
+    ? state.stack.toArray()
+    : (Array.isArray(state?.stack) ? state.stack : []);
+  const queue = state?.queue instanceof Queue
+    ? state.queue.toArray()
+    : (Array.isArray(state?.queue) ? state.queue : []);
   store.set(deletedExpensesStateKey(tripId), { stack, queue });
 }
 
@@ -3365,7 +3451,7 @@ function wireBudgetPage(me) {
     function updateUndoButton() {
       const undoBtn = qs('#undo-delete-btn');
       if (!undoBtn) return;
-      if (deletedStack.length > 0) {
+      if (deletedStack.size > 0) {
         undoBtn.classList.remove('hidden');
       } else {
         undoBtn.classList.add('hidden');
@@ -3384,10 +3470,7 @@ function wireBudgetPage(me) {
           if (activeTrip?.id) {
             const rows = getExpenses(activeTrip.id);
             rows.push(last);
-            const queueIndex = deletedQueue.findIndex((item) => item && item.id === last.id);
-            if (queueIndex >= 0) {
-              deletedQueue.splice(queueIndex, 1);
-            }
+            deletedQueue.remove((item) => item && item.id === last.id);
             saveExpenses(activeTrip.id, rows);
             persistDeletedExpenses();
             renderTable();
@@ -3892,7 +3975,7 @@ function wireBudgetPage(me) {
       const [removed] = rows.splice(idx, 1);
       if (removed) {
         deletedStack.push(removed);
-        deletedQueue.push(removed);
+        deletedQueue.enqueue(removed);
         persistDeletedExpenses();
       }
       saveExpenses(activeTrip.id, rows);
