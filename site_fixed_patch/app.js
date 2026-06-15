@@ -324,58 +324,66 @@ async function fetchWikipediaSummaryForLocation(location) {
 async function fetchCountryDetails(location) {
   const query = guessCountryQuery(location);
   if (!query) return null;
-  const slug = encodeURIComponent(query);
-  const url = `https://restcountries.com/v3.1/name/${slug}?fields=name,capital,currencies,languages,region,subregion,population,flags,timezones,idd,car,tld`;
-  const res = await fetch(url, { headers: { Accept: 'application/json' } });
-  if (res.status === 404) {
+
+  try {
+    const slug = encodeURIComponent(query);
+    const url = `https://restcountries.com/v3.1/name/${slug}?fields=name,capital,currencies,languages,region,subregion,population,flags,timezones,idd,car,tld`;
+    const res = await fetch(url, { headers: { Accept: 'application/json' } });
+
+    if (res.status === 404) {
+      return null;
+    }
+    if (!res.ok) {
+      throw new Error(`Country lookup failed with status ${res.status}`);
+    }
+
+    const json = await res.json();
+    if (!Array.isArray(json) || json.length === 0) {
+      return null;
+    }
+    const lowerQuery = query.toLowerCase();
+    const match = json.find((entry) => {
+      const common = entry?.name?.common ? String(entry.name.common).toLowerCase() : '';
+      const official = entry?.name?.official ? String(entry.name.official).toLowerCase() : '';
+      return common === lowerQuery || official === lowerQuery;
+    }) || json[0];
+
+    const currencies = Object.entries(match?.currencies || {}).map(([code, info]) => ({
+      code,
+      name: info?.name || code,
+      symbol: info?.symbol || '',
+    }));
+    const languages = Object.values(match?.languages || {}).map((lang) => String(lang));
+    const callingCode = (() => {
+      const root = match?.idd?.root || '';
+      const suffix = Array.isArray(match?.idd?.suffixes) && match.idd.suffixes.length > 0
+        ? match.idd.suffixes[0]
+        : '';
+      const joined = `${root || ''}${suffix || ''}`.trim();
+      if (!joined) return '';
+      return joined.startsWith('+') ? joined : `+${joined}`;
+    })();
+
+    return {
+      name: match?.name?.common || query,
+      officialName: match?.name?.official || '',
+      capital: Array.isArray(match?.capital) && match.capital.length > 0 ? match.capital[0] : '',
+      region: match?.region || '',
+      subregion: match?.subregion || '',
+      population: Number.isFinite(match?.population) ? match.population : null,
+      currencies,
+      languages,
+      timezones: Array.isArray(match?.timezones) ? match.timezones : [],
+      callingCode,
+      drivingSide: match?.car?.side || '',
+      flagSvg: match?.flags?.svg || '',
+      flagPng: match?.flags?.png || '',
+      tlds: Array.isArray(match?.tld) ? match.tld : [],
+    };
+  } catch (err) {
+    console.warn('Country details unavailable:', err);
     return null;
   }
-  if (!res.ok) {
-    throw new Error(`Country lookup failed with status ${res.status}`);
-  }
-  const json = await res.json();
-  if (!Array.isArray(json) || json.length === 0) {
-    return null;
-  }
-  const lowerQuery = query.toLowerCase();
-  const match = json.find((entry) => {
-    const common = entry?.name?.common ? String(entry.name.common).toLowerCase() : '';
-    const official = entry?.name?.official ? String(entry.name.official).toLowerCase() : '';
-    return common === lowerQuery || official === lowerQuery;
-  }) || json[0];
-
-  const currencies = Object.entries(match?.currencies || {}).map(([code, info]) => ({
-    code,
-    name: info?.name || code,
-    symbol: info?.symbol || '',
-  }));
-  const languages = Object.values(match?.languages || {}).map((lang) => String(lang));
-  const callingCode = (() => {
-    const root = match?.idd?.root || '';
-    const suffix = Array.isArray(match?.idd?.suffixes) && match.idd.suffixes.length > 0
-      ? match.idd.suffixes[0]
-      : '';
-    const joined = `${root || ''}${suffix || ''}`.trim();
-    if (!joined) return '';
-    return joined.startsWith('+') ? joined : `+${joined}`;
-  })();
-
-  return {
-    name: match?.name?.common || query,
-    officialName: match?.name?.official || '',
-    capital: Array.isArray(match?.capital) && match.capital.length > 0 ? match.capital[0] : '',
-    region: match?.region || '',
-    subregion: match?.subregion || '',
-    population: Number.isFinite(match?.population) ? match.population : null,
-    currencies,
-    languages,
-    timezones: Array.isArray(match?.timezones) ? match.timezones : [],
-    callingCode,
-    drivingSide: match?.car?.side || '',
-    flagSvg: match?.flags?.svg || '',
-    flagPng: match?.flags?.png || '',
-    tlds: Array.isArray(match?.tld) ? match.tld : [],
-  };
 }
 
 async function fetchDestinationInsights(trip) {
@@ -392,21 +400,24 @@ async function fetchDestinationInsights(trip) {
     return cached.data;
   }
 
-  try {
-    const [summary, country] = await Promise.all([
-      fetchWikipediaSummaryForLocation(location),
-      fetchCountryDetails(location),
-    ]);
-    const data = { location, summary, country };
-    rememberDestinationCache(cacheKey, data);
-    return data;
-  } catch (err) {
-    console.error('Destination insights fetch failed:', err);
+  const [summaryResult, countryResult] = await Promise.allSettled([
+    fetchWikipediaSummaryForLocation(location),
+    fetchCountryDetails(location),
+  ]);
+
+  const summary = summaryResult.status === 'fulfilled' ? summaryResult.value : null;
+  const country = countryResult.status === 'fulfilled' ? countryResult.value : null;
+
+  if (!summary && !country) {
     if (cached?.data) {
       return cached.data;
     }
-    throw err;
+    throw new Error('Both destination APIs failed');
   }
+
+  const data = { location, summary, country };
+  rememberDestinationCache(cacheKey, data);
+  return data;
 }
 
 function formatCurrencyList(country) {
